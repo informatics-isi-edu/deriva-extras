@@ -2,6 +2,7 @@
 
 import sys
 import json
+import re
 from deriva.core import ErmrestCatalog, AttrDict, get_credential, DEFAULT_CREDENTIAL_FILE, tag, urlquote, DerivaServer, get_credential, BaseCLI
 from deriva.core.ermrest_model import builtin_types, Schema, Table, Column, Key, ForeignKey, tag, AttrDict
 from deriva.core import urlquote, urlunquote
@@ -231,30 +232,57 @@ def delete_table_rows(catalog, schema_name, table_name, constraints=''):
     return(resp)
 
 # ---------------------------------------------------------------
+
+# assignment has to happen with alias
+def urlquote_list(attr_list):
+    quoted_list = []
+    for attr in attr_list:
+        # aggregate function e.g. Agg:=array(M:structure_id)
+        m = re.search("^([^:=]+:=)?(array|array_d|cnt|cnt_d)+\\(([^:=]+:)*([^:=()]+)\\)$", attr)
+        if m:
+            if not m[1]: raise Exception("ERROR: Aggregate function '%s' needs an assignment" % (m[2]))
+            m1 = urlquote(m[1].rsplit(":=",1)[0])+":=" 
+            m2 = m[2]
+            m3 = urlquote(m[3].rsplit(":",1)[0])+":" if m[3] else ""
+            m4 = urlquote(m[4])
+            quoted_list.append("%s%s(%s%s)" % (m1, m2, m3, m4))
+        else:
+            # parsing pattern A:=M:cname            
+            m = re.search("^([^:=]+:=)*([^:=]+:)*([^:=]+)$", attr)        
+            if not m: raise Exception("ERROR: Can't parse attribute names")
+            print("attr: %s " % (attr))
+            m1 = urlquote(m[1].rsplit(":=",1)[0])+":=" if m[1] else ""
+            m2 = urlquote(m[2].rsplit(":",1)[0])+":" if m[2] else ""
+            quoted_list.append("%s%s%s" % (m1, m2, urlquote(m[3])))
+    #print("quoted_list: %s" % (quoted_list))
+    return(quoted_list)
+
+# ---------------------------------------------------------------
 # example of descending order: "RID::desc::"
 """
   attr_list is a string attached to the query for projection/aggregate lists.
 """
-def get_entities(catalog, schema_name, table_name, constraints=None, keys=["RID"], attr_list=None, sort=["RID"], limit=None, batch_size=5000):
+def get_ermrest_query(catalog, schema_name, table_name, constraints=None, keys=["RID"], attributes=None, sort=["RID"], limit=None, batch_size=5000):
     payload = []
     if not limit:
         limit = 10000000
     after = []
     while True:
         page_size = limit if limit < batch_size else batch_size
-        if attr_list:
+        if attributes:
             url = "/attributegroup/M:=%s:%s" % (urlquote(schema_name), urlquote(table_name))
         else:
             url = "/entity/M:=%s:%s" % (urlquote(schema_name), urlquote(table_name))
         if constraints: url = "%s/%s" % (url, constraints)
-        if attr_list:
-            split_list = [ attr.rsplit(":", 1) for attr in attr_list ]  # split assignment, alias from cname
-            quoted_list = [ "%s:%s" % (prefix, urlquote(cname)) for  (prefix, cname) in split_list ] 
-            url = "%s/%s;%s" % (url, ",".join([ urlquote(v) for v in keys ]), ",".join(quoted_list))
-        if sort: url = "%s@sort(%s)" % (url, ",".join( [ urlquote(v) for v in sort ] ))
+        if attributes:
+            quoted_keys = urlquote_list(keys)
+            quoted_list = urlquote_list(attributes)
+            url = "%s/%s;%s" % (url, ",".join(quoted_keys), ",".join(quoted_list))
+        if sort:
+            url = "%s@sort(%s)" % (url, ",".join(urlquote_list(sort)))
         if after: url = "%s@after(%s)" % (url, ",".join( [ urlquote(v) for v in after ]))
         url = "%s?limit=%d" % (url, page_size)
-        print("get_entities: url = %s" % (url))
+        print("get_ermrest_query: url = %s" % (url))
         rows = catalog.get(url).json()
         payload.extend(rows)
         n = len(rows)
@@ -267,13 +295,15 @@ def get_entities(catalog, schema_name, table_name, constraints=None, keys=["RID"
 
 
 # ---------------------------------------------------------------
-def get_key2rows(catalog, schema_name, table_name, constraints='', keys=["RID"], attr_list=None, sort=["RID"], limit=None):
+def get_key2rows(catalog, schema_name, table_name, constraints='', keys=["RID"], attributes=None, sort=["RID"], limit=None):
     key2rows = {}
-    rows = get_entities(catalog, schema_name, table_name, constraints=constraints, keys=keys, attr_list=attr_list, sort=sort, limit=limit)
-    if len(keys) == 1:
-        key2rows = { row[keys[0]]: row for row in rows  }
-    elif len(keys) > 1:
-        key2rows = { row[tuple(keys)]: row for row in rows  }        
+    rows = get_ermrest_query(catalog, schema_name, table_name, constraints=constraints, keys=keys, attributes=attributes, sort=sort, limit=limit)
+    # strip alias from keys 
+    dict_keys = [ k.rsplit(":", 1)[1] if len(k.rsplit(":", 1)) == 2 else k for k in keys ]
+    if len(dict_keys) == 1:
+        key2rows = { row[dict_keys[0]]: row for row in rows  }
+    elif len(dict_keys) > 1:
+        key2rows = { row[tuple(dict_keys)]: row for row in rows  }        
     return key2rows
 
 
@@ -290,8 +320,9 @@ if __name__ == "__main__":
     catalog.dcctx['cid'] = "cli/test"
     #store = HatracStore("https", args.host, credentials)
 
-    constraints = "E:=PDB:entry/Workflow_Status=REL/$M"
-
-    #rows = get_entities(catalog, "PDB", "entry", attr_list=["A:=M:Accession_Code"], limit=10)
-    key2rows = get_key2rows(catalog, "PDB", "Entry_Generated_File", constraints=constraints, attr_list=["Code:=E:Accession_Code"], limit=10)
+    constraints = "T:=Vocab:System_Generated_File_Type/A:=Vocab:Archive_Category/$M"
+    attributes = ["RID2:=M:RID","File_Type:=M:File_Type","Archive_Category:=A:Name","Agg:=array(A:Directory_Name)"]
+  
+    #rows = get_entities(catalog, "PDB", "entry", attributes=["A:=M:Accession_Code"], limit=10)
+    key2rows = get_key2rows(catalog, "PDB", "Entry_Generated_File", constraints=constraints, keys=["RID"], attributes=attributes, limit=10)
     print(json.dumps(key2rows, indent=4))
