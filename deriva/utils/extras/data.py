@@ -46,7 +46,7 @@ def approx_json_bytecnt(data):
         raise TypeError('cannot estimate size of unexpected data %r' % data)
 # ---------------------------------------------------------------
 
-def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000):
+def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=1000000):
     if not payload:
         return []
 
@@ -64,7 +64,7 @@ def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None
     while index < payload_len:
         batch = payload[index:index+nrows]
         bytes = approx_json_bytecnt(batch)
-        while bytes > 1000000:
+        while bytes > batch_bytes:
             nrows = nrows - 1000
             batch = payload[index:index+nrows]            
             bytes = approx_json_bytecnt(batch)            
@@ -82,7 +82,7 @@ def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None
     return(inserted)
 
 # ---------------------------------------------------------------
-def update_table_rows(catalog, schema_name, table_name, keys=["RID"], column_names=[], payload=[], batch_size=10000):
+def update_table_rows(catalog, schema_name, table_name, keys=["RID"], column_names=[], payload=[], batch_size=10000, batch_bytes=2000000):
     model = catalog.getCatalogModel()
     if not payload:
         return []
@@ -109,7 +109,7 @@ def update_table_rows(catalog, schema_name, table_name, keys=["RID"], column_nam
     while index < payload_len:
         batch = payload[index:index+nrows]
         bytes = approx_json_bytecnt(batch)
-        while bytes > 2000000:
+        while bytes > batch_bytes:
             nrows = nrows - 1000
             batch = payload[index:index+nrows]            
             bytes = approx_json_bytecnt(batch)            
@@ -226,7 +226,7 @@ def insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None
 # ---------------------------------------------------------------
 # Example of response object: statis_code=204 headers={'Date': 'Fri, 27 Sep 2024 19:36:32 GMT', 'Server': 'Apache/2.4.59 (Fedora Linux) OpenSSL/3.0.9 mod_wsgi/4.9.4 Python/3.11', 'Set-Cookie': 'webauthn_track=ef32ad10.6231ef8ef6959; path=/; expires=Sat, 27-Sep-25 19:36:32 GMT', 'Vary': 'DNT,cookie,accept,User-Agent', 'Upgrade': 'h2', 'Connection': 'Upgrade, Keep-Alive', 'ETag': '"FvbI_TUNoSPPd3ANOP6-Ew==;*/*;2024-09-27 12:36:32.975696-07:00"', 'Keep-Alive': 'timeout=5, max=100'}
 
-def delete_table_rows(catalog, schema_name, table_name, key="RID", values=[]):
+def delete_table_rows(catalog, schema_name, table_name, key="RID", keys=["RID"], values=[]):
     # no constraint will cause all rows to be deleted!!
     if not values:
         raise Exception("DELETE ERROR: delete operation needs constraints")
@@ -261,7 +261,7 @@ def urlquote_list(attr_list):
             # parsing pattern A:=M:cname            
             m = re.search("^([^:=]+:=)*([^:=]+:)*([^:=]+)$", attr)        
             if not m: raise Exception("ERROR: Can't parse attribute names")
-            print("attr: %s " % (attr))
+            #print("attr: %s " % (attr))
             m1 = urlquote(m[1].rsplit(":=",1)[0])+":=" if m[1] else ""
             m2 = urlquote(m[2].rsplit(":",1)[0])+":" if m[2] else ""
             quoted_list.append("%s%s%s" % (m1, m2, urlquote(m[3])))
