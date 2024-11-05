@@ -31,6 +31,7 @@ per_tag_annotation_tags = [
     tag['generated'], tag['immutable'], tag['non_deletable'], tag['required'],
     tag["citation"],     
 ]
+catalog_wide_annotation_tags = [tag["generated"], tag["immutable"], tag["non_deletable"], tag["required"]]
 
 TEXT_ARRAY_COLUMNS = [],
 MARKDOWN_COLUMNS = ["Notes"]
@@ -110,12 +111,12 @@ def create_column_defs(cname_list):
 # -------------------------------------------------------
 
 # Create a vocabulary table if it does not exixt
-def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, other_cnames=None):
+def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, other_cnames=None, name_type="text"):
     
     column_defs = [
         Column.define(
             "Name",
-            builtin_types.text,
+            builtin_types[name_type],
             nullok=False
         )
     ]
@@ -216,6 +217,13 @@ def create_vocabulary_tdoc(schema_name, table_name, table_comment, other_cnames)
 # this section contains the helper functions for print model extras
 #
 
+
+FKEY_ACLS = {
+    "default": { "insert": ["*"], "update": ["*"] },
+    "RCBRMB": None,
+}
+
+# -----------------------------------------------------------
 def set_ermrest_groups(catalog):
     # ermrest_groups["https://auth.globus.org/6068dc4b-73ee-4143-b606-29c6780f582f"] = 'rbkcc',
     global ermrest_groups
@@ -320,8 +328,6 @@ def print_catalog_model_extras(model, annotations=True, acls=True, acl_bindings=
 
 
  
-# ======================================================================
-
 # -----------------------------------------------------------
 # throw an exception of CREATE or WRITE are in acls
 def check_acl_types(acls, name):
@@ -347,7 +353,49 @@ def check_model_acl_types(model):
             for fkey in table.foreign_keys:
                 check_acl_types(fkey.acls, "%s.%s.%s" % (schema_name, table.name, fkey.constraint_name))
     
-        
+
+# -----------------------------------------------------------
+# clear all the ACLs in the table and reset the fkey.acls to default
+def clear_table_acls(table):
+
+    if False: # to debug
+        for fkey in table.foreign_keys:
+            from_cols = {c.name for c in fkey.column_map.keys()}
+            to_cols = {c.name for c in fkey.column_map.values()}
+            pk_table = fkey.pk_table
+            print("       B-- fk %s:%s (%s->%s:%s) acls: %s, acl_bindings: %s" % (table.name, fkey.constraint_name, from_cols, fkey.pk_table.name, to_cols, fkey.acls, fkey.acl_bindings))
+            
+    table.clear(clear_comment=False, clear_annotations=False, clear_acls=True, clear_acl_bindings=True)
+
+    if False: # to debug
+        for fkey in table.foreign_keys:
+            from_cols = {c.name for c in fkey.column_map.keys()}
+            to_cols = {c.name for c in fkey.column_map.values()}
+            pk_table = fkey.pk_table
+            print("       C-- fk %s:%s (%s->%s:%s) acls: %s, acl_bindings: %s" % (table.name, fkey.constraint_name, from_cols, fkey.pk_table.name, to_cols, fkey.acls, fkey.acl_bindings))
+
+    # assign default to fkey acls
+    for fkey in table.foreign_keys:
+        fkey.acls.clear()
+        fkey.acls.update(FKEY_ACLS["default"])
+        if False: # to debug
+            from_cols = {c.name for c in fkey.column_map.keys()}
+            to_cols = {c.name for c in fkey.column_map.values()}
+            pk_table = fkey.pk_table        
+            print("       S-- fk %s:%s (%s->%s:%s) acls: %s, acl_bindings: %s" % (table.name, fkey.constraint_name, from_cols, fkey.pk_table.name, to_cols, fkey.acls, fkey.acl_bindings))        
+
+# -----------------------------------------------------------                
+# clear all acls and acl_bindings under the schema
+def clear_schema_acls(schema):
+    # NOTE: There is a bug in the fkey clear. It doesn't set the fkey acls to default.
+    # Uncomment and ignore the rest of the code when the bug is fixed
+    #schema.clear(clear_comment=False, clear_annotations=False, clear_acls=True, clear_acl_bindings=True)
+    
+    schema.acls.clear()
+    for table in schema.tables.values():
+        clear_table_acls(table)
+
+            
 # =================================================================================
 # helper functions to iternate over the model and return a set of tables, columns
 # according to the specified parameters
@@ -555,6 +603,7 @@ def print_schema_annotations(model, schema_name, tags):
 
                                
 # -- ------------------------------------------------------------------------------------
+# presence_annotations: tag["generated"], tag["immutable"], tag["non_deletable", tag["required"]
 def print_presence_tag_annotations(model, presence_tags):
     presence_tag_set = set(presence_tags)
     annotated_dict = {}
@@ -577,6 +626,67 @@ def print_presence_tag_annotations(model, presence_tags):
         sname, tname, cname = key
         print("%s.%s.%s: %s" % (sname, tname, cname, {tag2name[t] for t in annotated_set}))
 
+# -- ----------------------------------------------------------------------
+# decreated: replace byy print_presence_tag_annotation(model, [tag["generated"]]
+# TODO: delete
+def print_generated_elements(model):
+    generated_dict = {}
+    for schema in model.schemas.values():
+        if schema.generated: 
+            generated_dict.setdefault((schema.name, None), set())
+        for table in schema.tables.values():
+            if table.generated:
+                generated_dict.setdefault((schema.name, table.name), set())
+                for column in table.columns:
+                    #if column.name in ["RID", "RCT", "RMT", "RCB", "RMB", "Curation_Status", "Record_Status", "Record_Status_Detail"]: continue
+                    if column.name in ["RID", "RCT", "RMT", "RCB", "RMB"]: continue                    
+                    if column.generated:
+                        generated_dict.setdefault((schema.name, table.name), set()).add(column.name)
+
+    print("# ---- generated elements ----")
+    for key, cnames in generated_dict.items():
+        sname, tname = key
+        print("generated %s:%s: %s" % (sname, tname, cnames))
+
+# -- ----------------------------------------------------------------------
+# decreated: replace byy print_presence_tag_annotation(model, [tag["required"]]
+# TODO: delete
+def print_required_annotations(model):
+    required_dict = {}
+    for schema in model.schemas.values():
+        for table in schema.tables.values():
+            for column in table.columns:
+                if column.name in ["Principal_Investigator", "Consortium"]: continue
+                if column.required:
+                    required_dict.setdefault((schema.name, table.name), set()).add(column.name)
+
+    print("# ---- required elements ----")
+    for key, cnames in required_dict.items():
+        sname, tname = key
+        print("required %s:%s: %s" % (sname, tname, cnames))
+        
+# -- ------------------------------------------------------------------------
+def print_isolated_tables(model):
+    referenced_tables = set()
+    referring_tables = set()
+    for schema in model.schemas.values():
+        for table in schema.tables.values():
+            if table.foreign_keys:
+                referring_tables.add(table)
+            for fkey in table.foreign_keys:
+                referenced_tables.add(fkey.pk_table)
+
+    print("# ----- print isolated/outbound-only/inbound-only tables ---- ")
+    for schema in model.schemas.values():
+        for table in schema.tables.values():
+            if table not in referenced_tables and table not in referring_tables:
+                print("-- isolated: %s:%s" % (table.schema.name, table.name))
+            if table in referenced_tables - referring_tables:
+                print("-> in_only: %s:%s" % (table.schema.name, table.name))
+            if table in referring_tables - referenced_tables:
+                print("<- out_only: %s:%s" % (table.schema.name, table.name))
+            
+       
 # ======================================================
 # ---------------------------------------------------------------------------------------
 # clear anntoations contained within per-schema scripts
@@ -616,3 +726,22 @@ def clear_all_schema_annotations(model, clear_tags):
 def clear_catalog_annotations(model, clear_tags):
     for t in clear_tags:
         if t in model.annotations: model.annotations.pop(t, None)
+
+# ---------------------------------------------------------------------------------------        
+# -- clear schema, table, columns with certain tags
+# TODO: should add keys and fkeys for completeness
+def clear_catalog_wide_annotations(model, clear_tags=catalog_wide_annotation_tags):
+    for schema in model.schemas.values():
+        s_tags = list(schema.annotations.keys()).copy()
+        for tag in s_tags:
+            if tag in clear_tags: schema.annotations.pop(tag, None)
+        for table in schema.tables.values():
+            t_tags = list(table.annotations.keys()).copy()
+            for tag in t_tags:
+                if tag in clear_tags: table.annotations.pop(tag, None)
+            for column in table.columns:
+                c_tags = list(column.annotations.keys()).copy()
+                for tag in c_tags:
+                    if tag in clear_tags: column.annotations.pop(tag, None)
+        
+# ======================================================        
