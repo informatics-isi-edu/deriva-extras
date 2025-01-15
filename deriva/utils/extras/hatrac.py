@@ -4,10 +4,14 @@ import sys
 import json
 import re
 import requests.exceptions
-from deriva.core import ErmrestCatalog, AttrDict, get_credential, DEFAULT_CREDENTIAL_FILE, tag, urlquote, DerivaServer, get_credential, BaseCLI
+import os
+from dataclasses import dataclass
+
+from deriva.core import ErmrestCatalog, HatracStore, AttrDict, get_credential, DEFAULT_CREDENTIAL_FILE, tag, urlquote, DerivaServer, get_credential, BaseCLI
 from deriva.core.ermrest_model import builtin_types, Schema, Table, Column, Key, ForeignKey, tag, AttrDict
 from deriva.core import urlquote, urlunquote
-from deriva.core.utils.hash_utils import compute_file_hashes compute_hashes
+from deriva.core.utils.hash_utils import compute_file_hashes, compute_hashes
+from deriva.core.utils.core_utils import DEFAULT_CHUNK_SIZE, DEFAULT_HEADERS
 
 # ===================================================================================
 
@@ -36,11 +40,14 @@ def hexstr2base64(hstr):
     return base64
 """
 
-# ===================================================================================
-'''
-header keys are: ['Date', 'Server', 'WWW-Authenticate', 'Vary', 'Upgrade', 'Connection', 'Content-Length', 'accept-ranges', 'content-md5', 'Content-Location', 'content-disposition', 'ETag', 'Keep-Alive', 'Content-Type']
-'''
+# ----------------------------------------------------------
 def get_hatrac_metadata(store, object_path):
+    """
+    Get hatrac metadata through head request
+    Header keys: ['Date', 'Server', 'WWW-Authenticate', 'Vary', 'Upgrade', 'Connection', 'Content-Length', 'accept-ranges', 'content-md5', 'Content-Location', 'content-disposition', 'ETag', 'Keep-Alive', 'Content-Type']
+    Additional keys added: ['filename', 'server-uri', 'caching']
+    """
+    
     # this requires more authn, I think
     #resp = store.get('%s;metadata/' % object_path)
     #md1 = resp.json()
@@ -57,10 +64,96 @@ def get_hatrac_metadata(store, object_path):
     if "content-disposition" in md.keys():
         matches = re.match("^filename[*]=UTF-8''(?P<name>.+)$", md["content-disposition"])
         md["filename"] = matches.groupdict()["name"]
-    md["server_uri"] = store._server_uri
+    md["server-uri"] = store._server_uri
     md["caching"] = store._caching
     
     return md
+
+# ===================================================================================
+@dataclass
+class HatracFile:
+    """
+
+    """
+    hatrac_store: HatracStore
+    upload_url: str = None # url path e.g. "/hatrac/path/to/file"
+    hatrac_url: str = None# versioned hatrac url returned after uploading to hatrac e.g. "/hatrac/path/to/file:version"
+    file_path: str = None
+    file_name: str = None
+    file_bytes: int = None
+    md5_hex: str = None
+    md5_base64: str = None
+    sha256_hex: str = None
+    sha256_base64: str = None
+    content_type: str = 'application/octet-stream'
+    chunk_size: int = 25*1024*1024
+
+    def upload_file(self, fpath, upload_url, file_name=None, hashes=["md5"]):
+        """
+        upload_file prepares file related metadata, upload the file to hatrac, and store the versioned hatrac url in the structure.
+        TODO: add setting content-type logic. With s3, hatrac's guess of content-type is limited
+        """
+        self.file_path = fpath        
+        if not self.file_path:
+            raise Exception("ERROR: A local file path needs to be specified")
+        if not os.path.isfile(self.file_path): 
+            raise Exception("ERROR: A local file path [%s] is not a file or doesn't exist" % (self.file_path))
+        self.upload_url = upload_url
+        self.file_name = os.path.basename(self.file_path) if not file_name else file_name        
+        self.file_name = sanitize_filename(self.file_name)
+        self.file_bytes = os.path.getsize(self.file_path) #os.stat(self.file_path).st_size
+        if "md5" in hashes:
+            (self.md5_hex, self.md5_base64) = compute_file_hashes(self.file_path, hashes=['md5'])['md5']
+        if "sha256" in hashes:
+            (self.sha256_hex, self.sha256_base64) = compute_file_hashes(self.file_path, hashes=['sha256'])['sha256']
+
+        print("fpath: %s, url: %s" % (self.file_path, self.upload_url))
+        content_disposition="filename*=UTF-8''%s" % (self.file_name)
+        #hatrac_url = store.put_obj(upload_file_url, file_path, md5=md5_base64, content_disposition="filename*=UTF-8''%s" % (file_name), allow_versioning=False)
+        self.hatrac_url = store.put_loc(self.upload_url, self.file_path, md5=self.md5_base64, content_disposition=content_disposition, chunked=True, chunk_size=self.chunk_size, allow_versioning=False)
+        
+
+    # ------------------------------------------------------------------
+    def download_file(self, hatrac_url, destination_dir, file_name, hashes=["md5"]):
+        """
+        Download file from hatrac_url and put it under destimation_dir.
+        File name is derived from 1) file_name argument, 2) file_name seted in hatrac content disposition, 3) hatrac_url, respectively. 
+        Hashes specified in hashes argument will be computed
+        """
+        if not os.isdir(self.destination_dir): 
+            raise Exception("ERROR: A local directory [%s] is doesn't exist" % (destination_dir))
+        if not hatrac_url.startswith("/hatrac/"):
+            raise Exception("ERROR: url [%s] is not a hatrac url" % (hatrac_url))
+        self.hatrac_url = hatrac_url
+        if file_name:
+            self.file_name = file_name
+        else:
+            md = get_hatrac_metadata(self.hatrac_store, hatrac_url)
+            if "filename" in md.keys():
+                self.file_name = md["filename"]
+            else:
+                self.file_name = self.hatrac_url.rsplit("/", 1)[1].rsplit(":", 1)[0]
+        self.file_path = "%s/%s" % (destination_dir, self.file_name)
+        get_hatrac_file(self.store, self.hatrac_url, self.file_path)
+        self.file_bytes = os.path.getsize(self.file_path) #os.stat(self.file_path).st_size        
+        if "md5" in hashes:
+            (self.md5_hex, self.md5_base64) = compute_file_hashes(self.file_path, hashes=['md5'])['md5']
+        if "sha256" in hashes:
+            (self.sha256_hex, self.sha256_base64) = compute_file_hashes(self.file_path, hashes=['sha256'])['sha256']
+    
+    # ------------------------------------------------------------------
+    def verify(self, file_bytes=None, md5=None, sha256=None):
+        """
+        verify download hatrac file against provided arguments
+        """
+        if file_bytes:
+            assert self.file_types == file_bytes, "Mismatched file bytes: %s vs %s" % (self.file_bytes, file_bytes)
+        if md5: 
+            assert self.md5_hex == md5, "Mismatched md5: %s vs %s" % (self.md5_hex, md5)        
+        if sha256: 
+            assert self.sha256_hex == sha256, "Mismatched md5: %s vs %s" % (self.sha256_hex, sha256)
+        
+# ===================================================================================
 
 # ===================================================================================
 
@@ -156,7 +249,7 @@ def hatrac_upload(store,
 
 # --------------------------------------------------------------------------------
 
-def upload_file(from_store, to_store, row, c_name, c_url, c_md5, c_bytes):
+def copy_file(from_store, to_store, row, c_name, c_url, c_md5, c_bytes):
     # if the url is not in hatrac, return. Don't know how to handle
     if not row[c_url] or not re.match("^/hatrac/", row[c_url]):
         return None
@@ -217,13 +310,6 @@ def upload_file(from_store, to_store, row, c_name, c_url, c_md5, c_bytes):
         clean_up(processing_dir)    
     return(row)
 
-# --------------------------------------------------------------------------------
-def copy_file(from_store, to_store, row, c_name, c_url, c_md5, c_bytes):
-    """
-    copy hatrac file from one store to another store
-    """
-    upload_file(from_store, to_store, row, c_name, c_url, c_md5, c_bytes)
-    
 # ===================================================================================
 
 
@@ -240,4 +326,5 @@ if __name__ == "__main__":
     catalog.dcctx['cid'] = "cli/test"
     store = HatracStore("https", args.host, credentials)
 
-
+    hf = HatracFile(store)
+    hf.upload_file('/home/hongsuda/git/deriva-extras/deriva/utils/extras/test.txt', '/hatrac/dev/pdb/test/test.txt',  'test.txt')
