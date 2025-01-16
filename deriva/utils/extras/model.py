@@ -53,9 +53,9 @@ def create_schema_if_not_exist(model, schema_name, schema_comment=None):
 # Add table if not exist or update if exist
 def create_table_if_not_exist(model, schema_name, tdoc):
     schema = model.schemas[schema_name]
-    if tdoc["table_name"] not in schema.tables:
+    if tdoc["table_name"] not in schema.tables.keys():
+        print('creating table %s:%s' % (schema_name, tdoc["table_name"]))
         schema.create_table(tdoc)
-        print('create table %s:%s' % (schema_name, tdoc["table_name"]))        
 
 # ----------------------------------------------------------------
 
@@ -71,7 +71,17 @@ def drop_table_if_exist(model, schema_name, table_name):
         print("ERROR: drop table: table %s:%s doesn't exist" % (schema_name, table_name))
 
 # ----------------------------------------------------------------
-
+def create_column_if_not_exist(model, schema_name, table_name, column_def):
+    if schema_name not in model.schemas.keys() or table_name not in model.schemas[schema_name].tables.keys():
+        raise TypeError("ERROR: either schema %s or table %s doesn't exist" % (schema_name, table_name))
+    
+    table = model.schemas[schema_name].tables[table_name]
+    cname = column_def["name"]
+    if cname not in table.columns.elements: 
+        table.create_column(column_def)
+        print('Create column %s:%s:%s' % (schema_name, table_name, cname))
+    
+# ----------------------------------------------------------------
 # Check that schema and table exist before dropping column
 def drop_column_if_exist(model, schema_name, table_name, column_name):
     if schema_name not in model.schemas.keys() or table_name not in model.schemas[schema_name].tables.keys():
@@ -85,7 +95,7 @@ def drop_column_if_exist(model, schema_name, table_name, column_name):
         print("ERROR: drop column: column %s:%s:%s doesn't exist" % (schema_name, table_name, column_name))
         
 # -------------------------------------------------------
-def create_column_defs(cname_list):
+def create_vocab_column_defs(cname_list):
     column_defs = []
     # add the rest of columns as text columns
     for cname in cname_list:
@@ -139,7 +149,7 @@ def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, oth
     )
 
     if other_cnames:
-        column_defs.extend(create_column_defs(other_cnames))
+        column_defs.extend(create_vocab_column_defs(other_cnames))
         
     key_defs = [
         Key.define(["RID"],
@@ -179,7 +189,7 @@ def create_vocabulary_tdoc(schema_name, table_name, table_comment, other_cnames)
         ]
     else:
         column_defs = []
-    column_defs.extend(create_column_defs(other_cnames))
+    column_defs.extend(create_vocab_column_defs(other_cnames))
     
     key_defs = [
         Key.define(["RID"],
@@ -314,7 +324,7 @@ def print_schema_model_extras(model, schema_name, annotations=True, acls=True, a
     if annotations and schema.annotations: print("s-a    s: %s: %s" % (schema_name, schema.annotations))
     if acls and schema.acls: print("s-acl  %s : %s" % (schema_name, humanize_acls(schema.acls)))
     for table in model.schemas[schema_name].tables.values():
-        print_table_model_extras(model, schema_name, table.name, annotations, acls, acl_bindings, exclude_default_fkey)
+        print_table_model_extras(model, schema_name, table.name, annotations=annotations, acls=acls, acl_bindings=acl_bindings, exclude_default_fkey=exclude_default_fkey)
     
 # ----------------------------------------------------------            
 def print_catalog_model_extras(model, annotations=True, acls=True, acl_bindings=True, exclude_default_fkey=True):
@@ -322,10 +332,9 @@ def print_catalog_model_extras(model, annotations=True, acls=True, acl_bindings=
         set_ermrest_groups(model.catalog)        
     
     print("=========== catalog acls ============")
-    print(humanize_acls(model.acls))
+    if acls: print(humanize_acls(model.acls))
     for schema_name in model.schemas:
-        print_schema_model_extras(model, schema_name, annotations, acls, acl_bindings, exclude_default_fkey)
-
+        print_schema_model_extras(model, schema_name, annotations=annotations, acls=acls, acl_bindings=acl_bindings, exclude_default_fkey=exclude_default_fkey)
 
  
 # -----------------------------------------------------------
@@ -689,48 +698,77 @@ def print_isolated_tables(model):
        
 # ======================================================
 # ---------------------------------------------------------------------------------------
-# clear anntoations contained within per-schema scripts
-# per_schema_annotation_tags
-# clear_tags: a set of annotation tags to clear
-# NOTE: This function also remove tags that are not in the tag.values()
+# clear anntoations contained within a table
+#
 def clear_table_annotations(model, schema_name, table_name, clear_tags):
+    '''
+    On a specified table, clear table/column/fkey annotations that are specified in clear_tags.
+    param:
+      clear_tags: a set of annotation tags to clear
+    '''
     table = model.schemas[schema_name].tables[table_name]
     t_tags = list(table.annotations.keys()).copy()
     for tt in t_tags:
-        if tt in clear_tags or tt not in tag.values(): table.annotations.pop(tt, None)
+        if tt in clear_tags : table.annotations.pop(tt, None)
         for column in table.columns:
             c_tags = list(column.annotations.keys()).copy()
             for t in c_tags:
-                if t in clear_tags or t not in tag.values(): column.annotations.pop(t, None)
+                if t in clear_tags : column.annotations.pop(t, None)
         for fkey in table.foreign_keys:
             fk_tags = list(fkey.annotations.keys()).copy()
             for t in fk_tags:
-                if t in clear_tags or t not in tag.values(): fkey.annotations.pop(t, None)
+                if t in clear_tags : fkey.annotations.pop(t, None)
 
 # ---------------------------------------------------------------------------------------                
 # NOTE: This function also remove tags that are not in the tag.values()
 def clear_schema_annotations(model, schema_name, clear_tags):
+    '''
+    For all tables in a specified schema, clear table/column/fkey annotations that are specified in clear_tags.
+    param:
+      clear_tags: a set of annotation tags to clear
+    '''   
     schema = model.schemas[schema_name]
     s_tags = list(schema.annotations.keys()).copy()
     for t in s_tags:
-        if t in clear_tags or t not in tag.values(): schema.annotations.pop(t, None)
+        if t in clear_tags : schema.annotations.pop(t, None)
     for table in schema.tables.values():
         clear_table_annotations(model, schema_name, table.name, clear_tags)
 
 # ---------------------------------------------------------------------------------------        
-def clear_all_schema_annotations(model, clear_tags):
+def clear_catalog_annotations(model, clear_tags):
+    '''
+    Clear all annotations in the clear_tags for all model elements in the catalog.
+    '''
+    # clear catalog-level annotations
+    for t in clear_tags:
+        if t in model.annotations: model.annotations.pop(t, None)
+    # clear the rest of annotations
     for schema in model.schemas.values():
         clear_schema_annotations(model, schema.name, clear_tags)
 
 # ---------------------------------------------------------------------------------------        
-def clear_catalog_annotations(model, clear_tags):
-    for t in clear_tags:
-        if t in model.annotations: model.annotations.pop(t, None)
+def clear_all_schema_annotations(model, clear_tags):
+    '''
+    For all tables in all schemas, clear table/column/fkey annotations that are specified in clear_tags.
+    param:
+      clear_tags: a set of annotation tags to clear
+    '''
+    for schema in model.schemas.values():
+        clear_schema_annotations(model, schema.name, clear_tags)
 
 # ---------------------------------------------------------------------------------------        
+def clear_catalog_specific_annotations(model, clear_tags):
+    '''
+    clear catalog-specific annotations
+    '''
+    for t in clear_tags:
+        if t in model.annotations: model.annotations.pop(t, None)
+        
+# ---------------------------------------------------------------------------------------
+
 # -- clear schema, table, columns with certain tags
 # TODO: should add keys and fkeys for completeness
-def clear_catalog_wide_annotations(model, clear_tags=catalog_wide_annotation_tags):
+def clear_catalog_wide_annotations_legacy(model, clear_tags=catalog_wide_annotation_tags):
     for schema in model.schemas.values():
         s_tags = list(schema.annotations.keys()).copy()
         for tag in s_tags:
