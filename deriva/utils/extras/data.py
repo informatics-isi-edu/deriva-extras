@@ -226,11 +226,14 @@ def insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None
 # ---------------------------------------------------------------
 # Example of response object: statis_code=204 headers={'Date': 'Fri, 27 Sep 2024 19:36:32 GMT', 'Server': 'Apache/2.4.59 (Fedora Linux) OpenSSL/3.0.9 mod_wsgi/4.9.4 Python/3.11', 'Set-Cookie': 'webauthn_track=ef32ad10.6231ef8ef6959; path=/; expires=Sat, 27-Sep-25 19:36:32 GMT', 'Vary': 'DNT,cookie,accept,User-Agent', 'Upgrade': 'h2', 'Connection': 'Upgrade, Keep-Alive', 'ETag': '"FvbI_TUNoSPPd3ANOP6-Ew==;*/*;2024-09-27 12:36:32.975696-07:00"', 'Keep-Alive': 'timeout=5, max=100'}
 
-def delete_table_rows(catalog, schema_name, table_name, key="RID", keys=["RID"], values=[]):
+def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="RID", values=None):
     # no constraint will cause all rows to be deleted!!
-    if not values:
+    if not values or not constraints:
         raise Exception("DELETE ERROR: delete operation needs constraints")
-    constraints = "%s=ANY(%s)" % (urlquote(key), ",".join([ urlquote(v) for v in values ]))
+    # prioritize key values.
+    # TODO: address multi-keys?
+    if key and values:
+        constraints = "%s=ANY(%s)" % (urlquote(key), ",".join([ urlquote(v) for v in values ]))
     try:
         url = "/entity/%s:%s/%s" % (urlquote(schema_name), urlquote(table_name), constraints)    
         resp = catalog.delete(url)
@@ -241,6 +244,11 @@ def delete_table_rows(catalog, schema_name, table_name, key="RID", keys=["RID"],
         else:
             #print("ERROR: url:%s, errors=%s" % (url, e))
             raise 
+
+# ---------------------------------------------------------------
+
+def delete_table_rows_by_keys(catalog):
+    pass
 
 # ---------------------------------------------------------------
 
@@ -264,7 +272,7 @@ def urlquote_list(attr_list):
             #print("attr: %s " % (attr))
             m1 = urlquote(m[1].rsplit(":=",1)[0])+":=" if m[1] else ""
             m2 = urlquote(m[2].rsplit(":",1)[0])+":" if m[2] else ""
-            quoted_list.append("%s%s%s" % (m1, m2, urlquote(m[3])))
+            quoted_list.append("%s%s%s" % (m1, m2, m[3] if m[3]=='*' else urlquote(m[3])))
     #print("quoted_list: %s" % (quoted_list))
     return(quoted_list)
 
