@@ -18,6 +18,11 @@ from deriva.core.utils.core_utils import DEFAULT_CHUNK_SIZE, DEFAULT_HEADERS
 
 # content disposition can only contain:  - _ . ~ A...Z a...z 0...9 or %
 def sanitize_filename(filename):
+    """
+    Sanitize the provided filename, so it can be included properly in the content disposition
+    """
+    if os.path.basename(filename) != filename:
+        raise Exception("ERROR: the input %s is a path" % (filename))
     new_name = re.sub(r"[^-_.~A-Za-z0-9%]", "_", filename)
     return new_name
 
@@ -82,6 +87,7 @@ class HatracFile:
     file_path: str = None
     file_name: str = None
     file_bytes: int = None
+    file_extension: str = None
     md5_hex: str = None
     md5_base64: str = None
     sha256_hex: str = None
@@ -90,12 +96,52 @@ class HatracFile:
     default_content_type: str = 'application/octet-stream'
     chunk_size: int = 25*1024*1024
 
-    # ------------------------------------------------------------------        
+    # ------------------------------------------------------------------
+    @classmethod
+    def get_file_extension(cls, fpath):
+        ext = None
+        if re.search(r".*[.]([\w\d]+)$", fpath):
+            ext = re.match(r".*[.]([\w\d]+)$", fpath)[1]
+        return ext
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def get_filename(cls, fpath):
+        filename = os.path.basename(fpath)
+        return filename
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def get_sanitize_filename(cls, fpath):
+        """
+        Extract and sanitize filename from fpath
+        Note: content disposition can only contain:  - _ . ~ A...Z a...z 0...9 or %
+        """
+        filename = os.path.basename(fpath)
+        new_name = re.sub(r"[^-_.~A-Za-z0-9%]", "_", filename)
+        return new_name
+    
+    # ------------------------------------------------------------------
+    def clear(self):
+        self.upload_url = None 
+        self.hatrac_url = None
+        self.file_path = None
+        self.file_name = None
+        self.file_bytes: int = None
+        self.file_extension = None
+        self.md5_hex = None
+        self.md5_base64 = None
+        self.sha256_hex = None
+        self.sha256_base64 = None
+        self.content_type = None
+        
+    # ------------------------------------------------------------------            
     def upload_file(self, fpath, upload_url, file_name=None, hashes=["md5"], content_type=None, verbose=False):
         """
         upload_file prepares file related metadata, upload the file to hatrac, and store the versioned hatrac url in the structure.
         TODO: add setting content-type logic. With s3, hatrac's guess of content-type is limited
         """
+        self.clear()
         self.file_path = fpath        
         if not self.file_path:
             raise Exception("UPLOAD ERROR: A local file path needs to be specified")
@@ -111,6 +157,7 @@ class HatracFile:
             (self.sha256_hex, self.sha256_base64) = compute_file_hashes(self.file_path, hashes=['sha256'])['sha256']
         if not mimetypes.inited: mimetypes.init()
         self.content_type = mimetypes.guess_type(self.file_name)[0]
+        self.file_extension = self.get_file_extension(self.file_name)
         
         if verbose: print("upload: fpath: %s, url: %s, content_type: %s" % (self.file_path, self.upload_url, self.content_type))
         content_disposition="filename*=UTF-8''%s" % (self.file_name)
@@ -124,6 +171,7 @@ class HatracFile:
         file_name is derived from 1) file_name argument, 2) file_name seted in hatrac content disposition, 3) hatrac_url, respectively. 
         Hashes specified in hashes argument will be computed after the file is downloaded.
         """
+        self.clear()
         if not os.path.isdir(destination_dir): 
             raise Exception("DOWNLOAD ERROR: A local directory [%s] is doesn't exist" % (destination_dir))
         if not hatrac_url.startswith("/hatrac/"):
@@ -139,6 +187,7 @@ class HatracFile:
             else:
                 self.file_name = self.hatrac_url.rsplit("/", 1)[1].rsplit(":", 1)[0]
         self.file_path = "%s/%s" % (destination_dir, self.file_name)
+        self.file_extension = self.get_file_extension(self.file_name)        
         # Note: if self.file_path is not null and hatrac provides md5, the file is hash-verified.
         self.store.get_obj(self.hatrac_url, destfilename=self.file_path)
         self.file_bytes = os.path.getsize(self.file_path) #os.stat(self.file_path).st_size        

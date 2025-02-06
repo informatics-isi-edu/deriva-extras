@@ -33,7 +33,7 @@ per_tag_annotation_tags = [
 ]
 catalog_wide_annotation_tags = [tag["generated"], tag["immutable"], tag["non_deletable"], tag["required"]]
 
-TEXT_ARRAY_COLUMNS = [],
+TEXT_ARRAY_COLUMNS = ["Alternate_IDs", "Synonyms", "Related_Synonyms", "Parent_IDs"],
 MARKDOWN_COLUMNS = ["Notes"]
 INT4_COLUMNS = []
 
@@ -121,7 +121,7 @@ def create_vocab_column_defs(cname_list):
 # -------------------------------------------------------
 
 # Create a vocabulary table if it does not exixt
-def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, other_cnames=None, name_type="text"):
+def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, other_cnames=[], name_type="text"):
     
     column_defs = [
         Column.define(
@@ -176,7 +176,7 @@ def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, oth
 # ----------------------------------------------------------------
 
 # create a vocabulary table if it does not exixt
-def create_vocabulary_tdoc(schema_name, table_name, table_comment, other_cnames):
+def create_vocabulary_tdoc(schema_name, table_name, table_comment, ID_prefix="isrd", URI_catalog_id=None, other_cnames=[]):
 
     # overwrite Description to be nullable
     if table_name in ['Species', 'Annotated_Term']:
@@ -189,7 +189,8 @@ def create_vocabulary_tdoc(schema_name, table_name, table_comment, other_cnames)
         ]
     else:
         column_defs = []
-    column_defs.extend(create_vocab_column_defs(other_cnames))
+        
+    if other_cnames: column_defs.extend(create_vocab_column_defs(other_cnames))
     
     key_defs = [
         Key.define(["RID"],
@@ -213,7 +214,8 @@ def create_vocabulary_tdoc(schema_name, table_name, table_comment, other_cnames)
 
     table_def = Table.define_vocabulary(
         tname=table_name,
-        curie_template='smite:{RID}',
+        curie_template='%s:{RID}' % (ID_prefix),
+        uri_template='/id/{RID}' if not URI_catalog_id else '/id/%s/{RID}' % (str(URI_catalog_id)), 
         column_defs=column_defs,
         key_defs=key_defs,
         fkey_defs=fkey_defs,

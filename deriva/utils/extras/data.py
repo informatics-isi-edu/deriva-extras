@@ -227,8 +227,9 @@ def insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None
 # Example of response object: statis_code=204 headers={'Date': 'Fri, 27 Sep 2024 19:36:32 GMT', 'Server': 'Apache/2.4.59 (Fedora Linux) OpenSSL/3.0.9 mod_wsgi/4.9.4 Python/3.11', 'Set-Cookie': 'webauthn_track=ef32ad10.6231ef8ef6959; path=/; expires=Sat, 27-Sep-25 19:36:32 GMT', 'Vary': 'DNT,cookie,accept,User-Agent', 'Upgrade': 'h2', 'Connection': 'Upgrade, Keep-Alive', 'ETag': '"FvbI_TUNoSPPd3ANOP6-Ew==;*/*;2024-09-27 12:36:32.975696-07:00"', 'Keep-Alive': 'timeout=5, max=100'}
 
 def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="RID", values=None):
+    #print("sname: %s, tname: %s, constraints: %s, key:%s, values:%s" % (schema_name, table_name, constraints, key, values))
     # no constraint will cause all rows to be deleted!!
-    if not values or not constraints:
+    if not values and not constraints:
         raise Exception("DELETE ERROR: delete operation needs constraints")
     # prioritize key values.
     # TODO: address multi-keys?
