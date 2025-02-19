@@ -29,13 +29,20 @@ setup(
     author_email=author_email,
     maintainer=author,
     maintainer_email=author_email,
-    packages=find_namespace_packages(),
+    #package_dir={"": "deriva"},
+    # this exclude list not supported by ubuntu (python 3.8): list(setuptools.discovery.FlatLayoutPackageFinder.DEFAULT_EXCLUDE)    
+    packages=find_namespace_packages(
+        include=[
+            "deriva.utils.extras",
+            "deriva.utils.extras.*",                        
+        ],
+        exclude= ["build", "*.tests.*", "*.tmp.*", "__pycache__", "deriva.utils.extras.tmp"]
+    ),
     package_data={},
     python_requires='>=3.8, <4',    
 #    entry_points={
 #        'console_scripts': [
 #            'atlas_d2k-imaging-server = atlas_d2k.pipelines.image_processing.server:main',
-#            'atlas_d2k-imaging-client = atlas_d2k.pipelines.image_processing.client:main'
 #        ]
 #    },
     # move all image processing to requires if downloading lots of dependencies is a concern. 
