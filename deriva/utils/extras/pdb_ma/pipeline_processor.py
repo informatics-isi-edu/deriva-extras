@@ -92,6 +92,9 @@ class PipelineProcessor(object):
     subject_prefix = "BASE"                    # e.g. PDB-IHM or MA
     verbose = True
     notify = True
+
+    domain_sname = "PDB"
+    entry_rcb = None                           # user structure
     
     def __init__(self, **kwargs):
         # -- ermrest and hatrac
@@ -127,6 +130,25 @@ class PipelineProcessor(object):
         with open(email_config_file, "r") as f:
             self.email_config = json.load(f)
         if not self.email_config: raise Exception("ERROR: Proper email configuration in json format is required")
+
+    # -------------------------------------------------------------------
+    @class_method
+    def get_rcb_user(class, catalog, sname, tname, rid):
+        """ get RCB
+        """
+        constraints="/RID=%s/U:=(M:RCB)=(public:ERMrest_Client:ID)" % (rid)
+        rows = get_ermrest_query(catalog, sname, tname, constraints=constraints)
+        if len(rows) == 0:
+            raise Exception("RID: %s doesn't exist in table %s:%s" % (rid, sname, tname))
+        user = rows[0]
+        user["Short_ID"] = user["ID"].rsplit("/")[1]
+        return user
+                    
+    # -------------------------------------------------------------------
+    def get_entry_rcb(self, entry_id):
+        """ set up RCB user 
+        """
+        self.entry_rcb = self.get_rcb_user(self.catalog, self.domain_sname, "entry", entry_rid)
         
     # ------------------------------------------------------------------------
     def log_exception(self, e, notify=False, subject=None):
