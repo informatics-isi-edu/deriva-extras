@@ -12,7 +12,22 @@ from deriva.core import ErmrestCatalog, HatracStore, AttrDict, get_credential, D
 from deriva.core.ermrest_model import builtin_types, Schema, Table, Column, Key, ForeignKey, tag, AttrDict
 from deriva.core import urlquote, urlunquote
 from deriva.core.utils.hash_utils import compute_file_hashes, compute_hashes
-from deriva.core.utils.core_utils import DEFAULT_CHUNK_SIZE, DEFAULT_HEADERS
+from deriva.core.utils.core_utils import DEFAULT_CHUNK_SIZE, DEFAULT_HEADERS, DEFAULT_SESSION_CONFIG
+
+# ===================================================================================
+# TODO: pass that to the hatrac call
+
+# allow post to retry. Need this for slow home network
+session_config = DEFAULT_SESSION_CONFIG.copy()
+session_config.update({
+    # our PUT/POST to ermrest is idempotent
+    "allow_retry_on_all_methods": True,
+    # do more retries before aborting
+    "retry_read": 8,
+    "retry_connect": 5,
+    # increase delay factor * 2**(n-1) for Nth retry
+    "retry_backoff_factor": 5,
+})
 
 # ===================================================================================
 
@@ -79,7 +94,7 @@ def get_hatrac_metadata(store, object_path):
 @dataclass
 class HatracFile:
     """
-
+    A class to consolidate metadata related to hatrac file upload/download
     """
     store: HatracStore
     upload_url: str = None # url path e.g. "/hatrac/path/to/file"
@@ -136,7 +151,7 @@ class HatracFile:
         self.content_type = None
         
     # ------------------------------------------------------------------            
-    def upload_file(self, fpath, upload_url, file_name=None, hashes=["md5"], content_type=None, verbose=False):
+    def upload_file(self, fpath, upload_url, file_name=None, hashes=["md5"], content_type=None, verbose=False, allow_versioning=True):
         """
         upload_file prepares file related metadata, upload the file to hatrac, and store the versioned hatrac url in the structure.
         TODO: add setting content-type logic. With s3, hatrac's guess of content-type is limited
@@ -159,10 +174,10 @@ class HatracFile:
         self.content_type = mimetypes.guess_type(self.file_name)[0]
         self.file_extension = self.get_file_extension(self.file_name)
         
-        if verbose: print("upload: fpath: %s, url: %s, content_type: %s" % (self.file_path, self.upload_url, self.content_type))
+        if verbose: print("HatracFile.upload_file: fpath: %s, url: %s, content_type: %s md5_base64:%s" % (self.file_path, self.upload_url, self.content_type, self.md5_base64))
         content_disposition="filename*=UTF-8''%s" % (self.file_name)
         #hatrac_url = self.store.put_obj(upload_file_url, file_path, md5=md5_base64, content_disposition="filename*=UTF-8''%s" % (file_name), allow_versioning=False)
-        self.hatrac_url = self.store.put_loc(self.upload_url, self.file_path, md5=self.md5_base64, content_disposition=content_disposition, content_type=self.content_type, chunked=True, chunk_size=self.chunk_size, allow_versioning=False)
+        self.hatrac_url = self.store.put_loc(self.upload_url, self.file_path, md5=self.md5_base64, content_disposition=content_disposition, content_type=self.content_type, chunked=True, chunk_size=self.chunk_size, allow_versioning=allow_versioning)
         
     # ------------------------------------------------------------------    
     def download_file(self, hatrac_url, destination_dir, file_name=None, hashes=[], verbose=False):
@@ -209,7 +224,10 @@ class HatracFile:
             assert self.md5_hex == md5, "Mismatched md5: %s vs %s" % (self.md5_hex, md5)        
         if sha256: 
             assert self.sha256_hex == sha256, "Mismatched md5: %s vs %s" % (self.sha256_hex, sha256)
-        
+
+    # ------------------------------------------------------------------
+    def print(self):
+        pass
 
 # ===================================================================================
 
