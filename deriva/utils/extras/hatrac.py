@@ -39,6 +39,7 @@ def sanitize_filename(filename):
     if os.path.basename(filename) != filename:
         raise Exception("ERROR: the input %s is a path" % (filename))
     new_name = re.sub(r"[^-_.~A-Za-z0-9%]", "_", filename)
+    
     return new_name
 
 # ----------------------------------------------------------
@@ -109,8 +110,32 @@ class HatracFile:
     sha256_base64: str = None
     content_type: str = None
     default_content_type: str = 'application/octet-stream'
-    chunk_size: int = 25*1024*1024
+    chunk_size: int = 5*1024*1024 #25*1024*1024
 
+    @classmethod
+    def compute_file_hashes(cls, fpath, hashes=['md5']):
+        """
+        Returns a dictionary with the hash labels as keys and tuples of hex and base64 of hash values.
+        { "md5": (md5_hex, md5_base64), "sha256": (sha256_hex, sha256_base64) }
+        Note: This implementation is based on hatrac utility
+        """
+        return compute_file_hashes(fpath, hashes=hashes)
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def hex_to_base64(cls, hstr):
+        return hex_to_base64(hstr)
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def base64_to_hex(cls, b64str):
+        return base64_to_hex(b64str)
+
+    # ------------------------------------------------------------------
+    @classmethod
+    def get_file_bytes(cls, fpath):
+        return os.path.getsize(fpath) #os.stat(self.file_path).st_size
+    
     # ------------------------------------------------------------------
     @classmethod
     def get_file_extension(cls, fpath):
@@ -127,7 +152,7 @@ class HatracFile:
 
     # ------------------------------------------------------------------
     @classmethod
-    def get_sanitize_filename(cls, fpath):
+    def sanitize_filename(cls, fpath):
         """
         Extract and sanitize filename from fpath
         Note: content disposition can only contain:  - _ . ~ A...Z a...z 0...9 or %
@@ -135,8 +160,22 @@ class HatracFile:
         filename = os.path.basename(fpath)
         new_name = re.sub(r"[^-_.~A-Za-z0-9%]", "_", filename)
         return new_name
+
+    @classmethod
+    def get_sanitize_filename(cls, fpath):
+        cls.sanitize_filename(fpath)
     
     # ------------------------------------------------------------------
+    @classmethod    
+    def get_hatrac_metadata(cls, object_path):
+        """
+        Get hatrac metadata through head request.
+        Header keys: ['Date', 'Server', 'WWW-Authenticate', 'Vary', 'Upgrade', 'Connection', 'Content-Length', 'accept-ranges', 'content-md5', 'Content-Location', 'content-disposition', 'ETag', 'Keep-Alive', 'Content-Type']
+        Additional keys added: ['filename', 'server-uri', 'caching']
+        """
+        return get_hatrac_metadata(cls.store, object_path)
+                                   
+    # ------------------------------------------------------------------                
     def clear(self):
         self.upload_url = None 
         self.hatrac_url = None

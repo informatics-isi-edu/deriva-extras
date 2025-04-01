@@ -134,9 +134,9 @@ class PipelineProcessor(object):
     # -------------------------------------------------------------------
     @class_method
     def get_rcb_user(class, catalog, sname, tname, rid):
-        """ get RCB
+        """ get RCB row from ERMrest_Client table
         """
-        constraints="/RID=%s/U:=(M:RCB)=(public:ERMrest_Client:ID)" % (rid)
+        constraints="RID=%s/U:=(M:RCB)=(public:ERMrest_Client:ID)" % (rid)
         rows = get_ermrest_query(catalog, sname, tname, constraints=constraints)
         if len(rows) == 0:
             raise Exception("RID: %s doesn't exist in table %s:%s" % (rid, sname, tname))
@@ -236,8 +236,11 @@ class PipelineProcessor(object):
         fr.close()
         os.remove(temp_name)
 
-    # -------------------------------------------------------------------        
+    # -------------------------------------------------------------------
+    """
     # HT TODO: make this not deployment specific
+    json structure in mail.json:
+    """
     def send_mail(self, subject, text, receivers=None):
         """
         Send email notification
