@@ -236,12 +236,12 @@ def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="R
     if key and values:
         constraints = "%s=ANY(%s)" % (urlquote(key), ",".join([ urlquote(v) for v in values ]))
     try:
-        url = "/entity/%s:%s/%s" % (urlquote(schema_name), urlquote(table_name), constraints)    
+        url = "/entity/M:=%s:%s/%s" % (urlquote(schema_name), urlquote(table_name), constraints)    
         resp = catalog.delete(url)
-        #print("response=%s headers=%s" % (resp.status_code, resp.headers))
+        #print("delete_table_rows: status_code: %s, headers: %s" % (resp.status_code, resp.headers))
     except requests.HTTPError as e:
         if e.response.status_code == 404:
-            print("WARNING: ROWS NOT FOUND: url:%s status_code=%s NOT FOUND" % (url, e.response.status_code))
+            print("delete_table_rows: WARNING: ROWS NOT FOUND: url:%s status_code=%s NOT FOUND" % (url, e.response.status_code))
         else:
             #print("ERROR: url:%s, errors=%s" % (url, e))
             raise 
