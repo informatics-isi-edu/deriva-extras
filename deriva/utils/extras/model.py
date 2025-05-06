@@ -290,25 +290,25 @@ def print_table_model_extras(model, schema_name, table_name, annotations=True, a
     default_fkey_acls = {"insert": ["*"], "update": ["*"]}    
     table = model.schemas[schema_name].tables[table_name]
     
-    if not ermrest_groups:
-        set_ermrest_groups(model.catalog)        
-    
-    if annotations and table.annotations: print("  t-a   %s annotations: %s" % (table.name, json.dumps(table.annotations, indent=2)))
-    if acls and table.acls: print("  t-acl %s: %s" % (table.name, humanize_acls(table.acls)))
-    if acl_bindings and table.acl_bindings: print("  t-ab  %s: %s" % (table.name, humanize_acl_bindings(table.acl_bindings)))
+    if not ermrest_groups: set_ermrest_groups(model.catalog)        
+
+    print("\n== sname: %s, tname: %s" % (schema_name, table_name))
+    if annotations and table.annotations: print("  - t-a   %s annotations: %s" % (table.name, json.dumps(table.annotations, indent=2)))
+    if acls and table.acls: print("  - t-acl %s: %s" % (table.name, humanize_acls(table.acls)))
+    if acl_bindings and table.acl_bindings: print("  - t-ab  %s: %s" % (table.name, humanize_acl_bindings(table.acl_bindings)))
     for cname in table.columns.elements:
         column = table.columns[cname]
-        if annotations and column.annotations: print("    c-a %s.%s: %s" % (table.name, column.name, json.dumps(column.annotations, indent=2)))
-        if acls and column.acls: print("    c-acl: %s.%s: %s" % (table.name, column.name, humanize_acls(column.acls)))
-        if acl_bindings and column.acl_bindings: print("    c-ab  %s.%s: %s" % (table.name, column.name, humanize_acl_bindings(column.acl_bindings)))
+        if annotations and column.annotations: print("    - c-a %s.%s: %s" % (table.name, column.name, json.dumps(column.annotations, indent=2)))
+        if acls and column.acls: print("    - c-acl: %s.%s: %s" % (table.name, column.name, humanize_acls(column.acls)))
+        if acl_bindings and column.acl_bindings: print("    - c-ab  %s.%s: %s" % (table.name, column.name, humanize_acl_bindings(column.acl_bindings)))
     for key in table.keys:
-        if annotations and key.annotations: print("    k-a    %s: %s" % (key.constraint_name, json.dumps(key.annotations, indent=2)))
+        if annotations and key.annotations: print("    - k-a    %s: %s" % (key.constraint_name, json.dumps(key.annotations, indent=2)))
     for fkey in table.foreign_keys:
-        if annotations and fkey.annotations: print("    fk-a     %s: %s" % (fkey.constraint_name, json.dumps(fkey.annotations, indent=2)))
+        if annotations and fkey.annotations: print("    - fk-a     %s: %s" % (fkey.constraint_name, json.dumps(fkey.annotations, indent=2)))
         if acls and fkey.acls:
             if (exclude_default_fkey and fkey.acls != default_fkey_acls) or (exclude_default_fkey == False):
-                print("    fk-acl  %s: %s" % (fkey.constraint_name, humanize_acls(fkey.acls)))
-        if acl_bindings and fkey.acl_bindings: print("    fk-ab   %s: %s" % (fkey.constraint_name, humanize_acl_bindings(fkey.acl_bindings)))
+                print("    - fk-acl  %s: %s" % (fkey.constraint_name, humanize_acls(fkey.acls)))
+        if acl_bindings and fkey.acl_bindings: print("    - fk-ab   %s: %s" % (fkey.constraint_name, humanize_acl_bindings(fkey.acl_bindings)))
 
 
 # ----------------------------------------------------------

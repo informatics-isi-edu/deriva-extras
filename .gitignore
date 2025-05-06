@@ -1,0 +1,28 @@
+.DS_Store
+node_modules
+
+# dirs
+*.egg-info
+build
+**/__pycache__
+
+# emacs backup files
+*~
+sql/*~
+
+**/tmp/**
+**/*.tmp
+**/temp/**
+**/test/**
+**/tests/**
+
+# config
+config-scripts/config/*.json
+config-scripts/config/*.bk
+config-scripts/config/*~
+config-scripts/config/*.cpp2
+
+**/local_config.json
+**/ravine.lan/*
+
+

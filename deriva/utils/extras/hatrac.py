@@ -112,6 +112,23 @@ class HatracFile:
     default_content_type: str = 'application/octet-stream'
     chunk_size: int = 5*1024*1024 #25*1024*1024
 
+    def init(self, store, file_path=None, hashes=["md5"]):
+        self.store = store
+        if not file_path: return
+        if not os.path.isfile(self.file_path): 
+            raise Exception("UPLOAD ERROR: A local file path [%s] is not a file or doesn't exist" % (self.file_path))
+        self.file_name = os.path.basename(self.file_path) 
+        self.file_name = self.sanitize_filename(self.file_name)
+        self.file_bytes = os.path.getsize(self.file_path) #os.stat(self.file_path).st_size
+        if "md5" in hashes:
+            (self.md5_hex, self.md5_base64) = compute_file_hashes(self.file_path, hashes=['md5'])['md5']
+        if "sha256" in hashes:
+            (self.sha256_hex, self.sha256_base64) = compute_file_hashes(self.file_path, hashes=['sha256'])['sha256']
+        if not mimetypes.inited: mimetypes.init()
+        self.content_type = mimetypes.guess_type(self.file_name)[0]
+        self.file_extension = self.get_file_extension(self.file_name)
+            
+    # ------------------------------------------------------------------
     @classmethod
     def compute_file_hashes(cls, fpath, hashes=['md5']):
         """
@@ -188,6 +205,16 @@ class HatracFile:
         self.sha256_hex = None
         self.sha256_base64 = None
         self.content_type = None
+
+    # ------------------------------------------------------------------                
+    def print(self):
+        print("file_path: %s, file_name: %s" % (self.file_path, self.file_name))
+        print("file_extension: %s, content_type: %s" % (self.file_extension, self.content_type))        
+        print("file_bytes: %d" % (self.file_bytes))
+        print("md5: md5_hex: %s, md5_base64: %s" % (self.md5_hex, self.md5_base64))
+        print("sha256: sha256_hex: %s, sha256_base64: %s" % (self.sha256_hex, self.sha256_base64))
+        print("upload_url: %s" % (self.upload_url))
+        print("hatrac_url: %s" % (self.hatrac_url))
         
     # ------------------------------------------------------------------            
     def upload_file(self, fpath, upload_url, file_name=None, hashes=["md5"], content_type=None, verbose=False, allow_versioning=True):

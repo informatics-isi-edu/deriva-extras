@@ -10,7 +10,7 @@ import traceback
 
 from deriva.utils.extras.data import insert_if_not_exist, get_ermrest_query, delete_table_rows
 from deriva.utils.extras.model import create_vocabulary_tdoc, create_vocab_tdoc, create_table_if_not_exist, create_schema_if_not_exist
-from deriva..utils.extras.shared import DCCTX, ConfigCLI, cfg
+from deriva.utils.extras.shared import DCCTX, ConfigCLI, cfg
 
 
 class DispatcherRuntimeError (RuntimeError):
@@ -21,6 +21,37 @@ class DispatcherNotReadyError (RuntimeError):
 
 class DispatcherBadDataError (RuntimeError):
     pass
+
+
+# ===================================================================================
+# logformatter = logging.Formatter('%(name)s[%(process)d.%(thread)d]: %(message)s')
+
+def init_logger(log_level="info", log_file="/tmp/log/processor.log"):
+    """
+    Set logger. This should only be called once for every process
+    """
+    __LOGLEVEL = {
+        'error': logging.ERROR,
+        'warning': logging.WARNING,
+        'info': logging.INFO,
+        'debug': logging.DEBUG
+    }
+    log_dir = log_file.rsplit("/", 1)[0]
+    os.system(f'mkdir -p {log_dir}')
+    format = '- %(asctime)s: %(levelname)s <%(module)s>: %(message)s'
+    
+    logger = logging.getLogger(__name__)
+    handler=logging.handlers.TimedRotatingFileHandler(log_file, when='D', backupCount=7)
+    log_level = __LOGLEVEL[log_level]
+    logger.addHandler(handler)    
+    handler.setFormatter(logging.Formatter(format))
+    logger.setLevel(log_level)
+    if file_path: 
+        init_logging(level=log_level, log_format=format, file_path=log_file)
+    else:
+        init_logging(level=log_level, log_format=format)
+    logger.info("************************ init logger ************************")
+    return(logger)
 
 # =================================================================================================
 # claim_input_data=lambda row: {'RID': row['RID'], 'Processing_Status': "In-progress", 'Status_Detail': None},
@@ -40,6 +71,27 @@ class JobStream (object):
         # TO BE OVERWRITE BY SUBCLASSES
         raise NotImplementedError("run_row_job needs to be overwritten")
 
+    def run_batch_job(self, dispatcher, batch):
+        '''
+        row : the row that is claimed
+        claim: the json array of values that was used during the claiming process
+        '''
+        for row, claim in batch:
+            try:
+                dispatcher.logger.info('\nClaimed job %s.' % row.get('RID'))
+                self.run_row_job(dispatcher, row) # need to pass dispatcher
+            except DispatcherBadDataError as e:
+                dispatcher.logger.error("Aborting task %s on data error: %s\n" % (row["RID"], e))
+                dispatcher.catalog.put(self.put_claim_url, json=[self.failure_input_data(row, e)])
+                # continue with next task...?
+            except DispatcherRuntimeError as e:
+                dispatcher.logger.error("Aborting task %s on data error: %s\n" % (row["RID"], e))
+                dispatcher.catalog.put(self.put_claim_url, json=[self.failure_input_data(row, e)])
+                # continue with next task...?
+            except Exception as e:
+                dispatcher.catalog.put(self.put_claim_url, json=[self.failure_input_data(row, e)])
+                raise
+    
     def claim_input_data(self, row):
         return {'RID': row['RID'], 'Processing_Status': "In-progress", 'Status_Details': None}
 
@@ -79,6 +131,7 @@ class JobDispatcher (object):
         )
         self.catalog.dcctx['cid'] = 'pipeline'
         self.logger = logger
+        self.logger.info("--- JobDispatcher: init")
         self.store = HatracStore('https', self.deriva_host, self.credentials)
         
     def look_for_work(self):
@@ -97,6 +150,7 @@ class JobDispatcher (object):
 
         for stream in self.job_streams:
             # this handled concurrent update for us to safely and efficiently claim a record
+            # batch is an array of (row, claim_input_data) where claim_input_data is a function to set claimed values
             try:
                 stream.idle_etag, batch = self.catalog.state_change_once(
                     stream.get_claimable_url,
@@ -112,23 +166,14 @@ class JobDispatcher (object):
                 self.logger.error('%s' % ''.join(traceback.format_exception(et, ev, tb)))
                 continue
             # batch may be empty if no work was found...
-            for row, claim in batch:
+            if batch:
                 found_work = True
                 try:
-                    self.logger.info('\nClaimed job %s.' % row.get('RID'))
-                    stream.run_row_job(self, row) # need to pass dispatcher
-                except DispatcherBadDataError as e:
-                    self.logger.error("Aborting task %s on data error: %s\n" % (row["RID"], e))
-                    self.catalog.put(stream.put_claim_url, json=[stream.failure_input_data(row, e)])
-                    # continue with next task...?
-                except DispatcherRuntimeError as e:
-                    self.logger.error("Aborting task %s on data error: %s\n" % (row["RID"], e))
-                    self.catalog.put(stream.put_claim_url, json=[stream.failure_input_data(row, e)])
-                    # continue with next task...?
+                    stream.run_batch_job(self, batch) # need to pass dispatcher
                 except Exception as e:
-                    self.catalog.put(stream.put_claim_url, json=[stream.failure_input_data(row, e)])
+                    # TODO: consider iterate over the batch to log error, or let the batch handler deals with it
+                    #self.catalog.put(stream.put_claim_url, json=[stream.failure_input_data(row, e)])
                     raise
-
         return found_work
 
     def blocking_poll(self, job_streams):
@@ -152,11 +197,11 @@ class ExampleJobStream (JobStream):
 
     # TODO: update the row details to clain the row
     def claim_input_data(self, row):
-        return {'RID': row['RID'], 'Process_Status': "In-progress", 'Record_Status_Details': None}
+        return {'RID': row['RID'], 'Process_Status': 'In-progress', 'Record_Status_Details': None}
 
     # TODO: update the row details if something is wrong during execution
     def failure_input_data(self, row, e):
-        return  {'RID': row['RID'], 'Process_Status': "Error", 'Record_Status_Details': e}    
+        return  {'RID': row['RID'], 'Process_Status': 'Error', 'Record_Status_Details': e}    
         
 
 
