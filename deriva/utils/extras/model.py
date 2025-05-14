@@ -251,42 +251,71 @@ def set_ermrest_groups(catalog):
 
 # ----------------------------------------------------------
 # replace group id with group name based on the value stored in ermrest
+def humanize_groups(groups):
+    hgroups = []
+    for group in groups:
+        if group in ermrest_groups.keys():
+            hgroups.append(ermrest_groups[group])
+        else: 
+            hgroups.append(group)
+    return hgroups
+
+# ----------------------------------------------------------
+# replace group id with group name based on the value stored in ermrest
 def humanize_acls(acls):
     str = {}
     for role, groups in acls.items():
+        str[role] = humanize_groups(groups)
+        '''
         hgroups = []
         for g in groups: 
             if g in ermrest_groups.keys():
                 hgroups.append(ermrest_groups[g])
             else: 
                 hgroups.append(g)
-        str[role] = hgroups
+        str[role] = hgroups        
+        '''
     return str
 
 # ----------------------------------------------------------
 # replace group id with group name based on the value stored in ermrest
-#
+# Make sure not to mutate the original acl_bindings!
 def humanize_acl_bindings(acl_bindings):
     #print("---%s---" % (acl_bindings))
     str = acl_bindings.copy()
-    for name, acl_binding in str.items():
-        if not acl_binding:
-            continue
+    for name, acl_binding in acl_bindings.items():
+        if not acl_binding and not isinstance(acl_binding, dict): continue
+        if "scope_acl" not in acl_binding.keys(): continue
+        str[name] = acl_binding.copy()
         scope_acl = []
         for g in acl_binding["scope_acl"]:
             if g in ermrest_groups.keys():
                 scope_acl.append(ermrest_groups[g])
             else: 
                 scope_acl.append(g)
-        acl_binding["scope_acl"] = scope_acl
+        str[name]["scope_acl"] = scope_acl
         #print("set acl_bindings [%s][%s] to %s" % (name, "scope_acl", scope_acl))
     return str
 
 # ----------------------------------------------------------
+def format_acls(acls, humanize=True):
+    str = humanize_acls(acls) if humanize else acls
+    return str
+    
+# ----------------------------------------------------------
+def format_acl_bindings(acl_bindings, humanize=True):
+    if humanize: acl_bindings = humanize_acl_bindings(acl_bindings)
+    str = "{"
+    for name, acl_binding in acl_bindings.items():
+        str = str + "\n        o %s : %s" % (name, acl_binding)
+    str = str + " }"
+    return str
+    
+# ----------------------------------------------------------
 '''
   print_table_model_extras prints annotations, acls, and acl_bindings
 '''
-def print_table_model_extras(model, schema_name, table_name, annotations=True, acls=True, acl_bindings=True, exclude_default_fkey=True):
+def print_table_model_extras(model, schema_name, table_name, annotations=True, acls=True, acl_bindings=True, exclude_default_fkey=True, humanize=True):
     default_fkey_acls = {"insert": ["*"], "update": ["*"]}    
     table = model.schemas[schema_name].tables[table_name]
     
@@ -294,21 +323,21 @@ def print_table_model_extras(model, schema_name, table_name, annotations=True, a
 
     print("\n== sname: %s, tname: %s" % (schema_name, table_name))
     if annotations and table.annotations: print("  - t-a   %s annotations: %s" % (table.name, json.dumps(table.annotations, indent=2)))
-    if acls and table.acls: print("  - t-acl %s: %s" % (table.name, humanize_acls(table.acls)))
-    if acl_bindings and table.acl_bindings: print("  - t-ab  %s: %s" % (table.name, humanize_acl_bindings(table.acl_bindings)))
+    if acls and table.acls: print("  - t-acl %s: %s" % (table.name, format_acls(table.acls, humanize)))
+    if acl_bindings and table.acl_bindings: print("  - t-ab  %s: %s" % (table.name, format_acl_bindings(table.acl_bindings, humanize)))
     for cname in table.columns.elements:
         column = table.columns[cname]
         if annotations and column.annotations: print("    - c-a %s.%s: %s" % (table.name, column.name, json.dumps(column.annotations, indent=2)))
-        if acls and column.acls: print("    - c-acl: %s.%s: %s" % (table.name, column.name, humanize_acls(column.acls)))
-        if acl_bindings and column.acl_bindings: print("    - c-ab  %s.%s: %s" % (table.name, column.name, humanize_acl_bindings(column.acl_bindings)))
+        if acls and column.acls: print("    - c-acl: %s.%s: %s" % (table.name, column.name, format_acls(column.acls, humanize)))
+        if acl_bindings and column.acl_bindings: print("    - c-ab  %s.%s: %s" % (table.name, column.name, format_acl_bindings(column.acl_bindings, humanize)))
     for key in table.keys:
         if annotations and key.annotations: print("    - k-a    %s: %s" % (key.constraint_name, json.dumps(key.annotations, indent=2)))
     for fkey in table.foreign_keys:
         if annotations and fkey.annotations: print("    - fk-a     %s: %s" % (fkey.constraint_name, json.dumps(fkey.annotations, indent=2)))
         if acls and fkey.acls:
             if (exclude_default_fkey and fkey.acls != default_fkey_acls) or (exclude_default_fkey == False):
-                print("    - fk-acl  %s: %s" % (fkey.constraint_name, humanize_acls(fkey.acls)))
-        if acl_bindings and fkey.acl_bindings: print("    - fk-ab   %s: %s" % (fkey.constraint_name, humanize_acl_bindings(fkey.acl_bindings)))
+                print("    - fk-acl  %s: %s" % (fkey.constraint_name, format_acls(fkey.acls, humanize)))
+        if acl_bindings and fkey.acl_bindings: print("    - fk-ab   %s: %s" % (fkey.constraint_name, format_acl_bindings(fkey.acl_bindings, humanize)))
 
 
 # ----------------------------------------------------------
@@ -544,7 +573,89 @@ def add_fkey_source_definitions(table, from_cname, to_tname, fkey_source_name):
     print(table.source_definitions)
 
 # -- ------------------------------------------------------------------------------------
-def print_schema_annotations(model, schema_name, tags):
+# TODO: add handler for array type 
+def format_dict(obj, flatten_limit=2, indent=12, leading_spaces=True):
+    """ Format a dic object. 
+    """
+
+    if not isinstance(obj, dict): return ""
+    spaces = ''
+    for i in range(0, indent+4):
+        spaces += ' '
+
+    #print("obj[%d<=%d]: %s" % (len(obj.keys()), flatten_limit, obj))
+    if len(obj.keys()) <= flatten_limit:
+        keys = obj.keys()
+        #str = "%s%r" % (spaces[0:-4] if leading_spaces else "", obj)
+        str = "%s{" % (spaces[0:-4]) if leading_spaces else "{ "
+        for k in keys:
+            str += '%r : %r, ' % (k, obj[k])
+        str += "}"            
+        return str
+    
+    str = "%s{" % (spaces[0:-4] if leading_spaces else "")        
+    for k, v in obj.items():
+        if isinstance(v, bool):
+            str = str + '\n%s%r : %r,' % (spaces, k, v)
+        elif isinstance(v, int):
+            str = str + '\n%s%r : %r,' % (spaces, k, v)
+        elif isinstance(v, dict):
+            str = str + '\n%s%r : %s,' % (spaces, k, format_dict(v, indent=indent+4, leading_spaces=False))
+        else:
+            str = str + '\n%s%r : %r,' % (spaces, k, v)
+    str += "\n%s}" % (spaces[0:-4])    
+
+    return str
+# -- ------------------------------------------------------------------------------------
+# TODO: make filter context more flexible?
+def format_annotations(annotations, indent=0):
+    """
+    This function was originally written to format visible-columns and visible-fkey annotations for
+    the purpose of making them succint (more succint than json.dumps with indent=4), then
+    generalize to support other annotations. Its purpose is to support print_schema_annotations function that
+    can be put into a .py file. Note: the handling of filter is still pretty hard-coded.
+    The first level dict keys will all be in its own line. 
+    """
+    if not annotations or not isinstance(annotations, dict): return ""
+
+    str = ""
+    spaces = ''
+    for i in range(0, indent+12):
+        spaces += ' '
+    str = "%s{" % (spaces[0:-12])
+    for context in annotations.keys():
+        str = str + '\n%s%r : ' % (spaces[0:-8], context)
+        child_indent = indent+8
+        dir_list = annotations[context]
+        if (not isinstance(dir_list, dict) and not isinstance(dir_list, list)) or not dir_list :
+            str += " %r," % (dir_list)
+            continue
+        elif context == "filter" and isinstance(annotations[context], dict):
+            str += " {"
+            str += "\n%s'and' : " % (spaces[0:-4])
+            dir_list = annotations[context]["and"]
+            child_indent = indent+12
+            is_filter = True
+        elif isinstance(annotations[context], dict):  # e.g. source_definition, table_display
+            str += "%s," % format_dict(dir_list, indent=indent+4, leading_spaces=False)
+            continue
+        else:
+            is_filter = False
+        # assume dir_list is an array 
+        str += " ["            
+        for directive in dir_list:
+            if isinstance(directive, dict):
+                str = str + "\n%s," % format_dict(directive, indent=child_indent)
+            else:
+                str = str + "\n%s%r, " % (spaces if is_filter else spaces[0:-4] , directive)
+        str = str + "\n%s]," % ( spaces[0:-4] if is_filter else  spaces[0:-8] )  # end array
+        if context == "filter":  
+            str += "\n%s}," % (spaces[0:-8])  # end list
+    str = str + "\n%s}" % (spaces[0:-12])
+    return str
+
+# -- ------------------------------------------------------------------------------------
+def print_schema_annotations(model, schema_name, tags=per_schema_annotation_tags):
     schema =  model.schemas[schema_name]
     if schema.annotations:
         print("def update_%s(model):" % (schema.name))
@@ -556,11 +667,14 @@ def print_schema_annotations(model, schema_name, tags):
             if key not in tag2name.keys():
                 print("ERROR: %s -> %s" % (key, json.dumps(annotation, indent=4)))
                 continue
-            print('    schema.%s.update(' % (table.name, tag2name[key]))            
-            print('%s' % (json.dumps([schema.annotations], indent=4)))
+            print('    model.schemas[%s].%s.update(' % (schema.name, tag2name[key]))
+            #print('%s' % (json.dumps(schema.annotations, indent=4)))
+            print(format_annotations(annotation, indent=4))                            
             print(')\n')
 
-    for table in schema.tables.values():
+    for tname in sorted(schema.tables.keys()):
+        table = schema.tables[tname]
+        
         #if "Curation_Status" in table.columns.elements: add_fkey_source_definitions(table, "Curation_Status", "Status", "curation_status_fkey")
         #if "Record_Status" in table.columns.elements: add_fkey_source_definitions(table, "Record_Status", "Record_Status", "record_status_fkey")
         if not table.annotations: continue
@@ -568,19 +682,26 @@ def print_schema_annotations(model, schema_name, tags):
         print('    schema = model.schemas["%s"]' % (schema.name))
         print('    table = schema.tables["%s"]' % (table.name))
         
-        for key, annotation in table.annotations.items():
-            if tags and key not in tags: continue            
-            if key not in tag2name.keys():
-                print("ERROR: %s -> %s" % (key, json.dumps(annotation, indent=4)))
-                continue
-            if key not in per_schema_annotation_tags: continue
-            print('    # ----------------------------')
-            print('    schema.tables["%s"].%s.update(' % (table.name, tag2name[key]))
-            print('%s' % (json.dumps([annotation], indent=4)))
-            print(')\n')
+        if table.annotations:
+            for key, annotation in table.annotations.items():
+                if tags and key not in tags: continue            
+                if key not in tag2name.keys():
+                    print("ERROR: %s -> %s" % (key, json.dumps(annotation, indent=4)))
+                    continue
+                if key not in per_schema_annotation_tags: continue
+                print('    # ----------------------------')
+                print('    schema.tables["%s"].%s.update(' % (table.name, tag2name[key]))
+                if key in [ tag["source_definitions"], tag["visible_columns"], tag["visible_foreign_keys"],tag["table_display"], tag["column_defaults"] ]:
+                    print(format_annotations(annotation, indent=4))                
+                else:
+                    #tag["display"], tag["key_display"], tag["app_links"], tag["indexing_preferences"], tag["table_alternatives"],                
+                    print(format_dict(annotation, indent=4))                
+                    #print('%s' % (json.dumps(annotation, indent=4)))
+                print(')\n')
                 
         for column in table.columns:
-            if column.name in ["RID", "RCT", "RCB", "RMT", "RMB"]: continue            
+            if column.name in ["RID", "RCT", "RCB", "RMT", "RMB"]: continue
+            if not column.annotations: continue
             for key, annotation in column.annotations.items():
                 if tags and key not in tags: continue                
                 if key not in tag2name.keys():
@@ -589,7 +710,11 @@ def print_schema_annotations(model, schema_name, tags):
                 if key not in per_schema_annotation_tags: continue                
                 print('    # ----------------------------')
                 print('    schema.tables["%s"].columns["%s"].%s.update(' % (table.name, column.name, tag2name[key]))
-                print('%s' % (json.dumps([annotation], indent=4)))
+                if key in [ tag["column_display"], tag["column_defaults"] ]:
+                    print(format_annotations(annotation, indent=4))                
+                else:
+                     print(format_dict(annotation, indent=4))                
+                    #print('%s' % (json.dumps(annotation, indent=4)))
                 print(')\n')
 
         for fkey in table.foreign_keys:
@@ -602,13 +727,18 @@ def print_schema_annotations(model, schema_name, tags):
                 if key not in per_schema_annotation_tags: continue
                 print('    # ----------------------------')
                 print('    schema.tables["%s"].foreign_keys[(schema,"%s")].%s.update(' % (table.name, fkey.constraint_name, tag2name[key]))
-                print('%s' % (json.dumps([annotation], indent=4)))
+                if key in [ tag["foreign_key"]]:
+                    print(format_annotations(annotation, indent=4))                
+                else:
+                    print(format_dict(annotation, indent=4))                
+                    #print('%s' % (json.dumps(annotation, indent=4)))
                 print(')\n')
             
         print()
 
     print("def update_%s_annotations(model):" % (schema.name))
-    for table in schema.tables.values():
+    for tname in sorted(schema.tables.keys()):
+        table = schema.tables[tname]
         if not table.annotations: continue
         print('    update_%s_%s(model)' % (schema.name, table.name))
 
@@ -737,13 +867,15 @@ def clear_schema_annotations(model, schema_name, clear_tags):
         clear_table_annotations(model, schema_name, table.name, clear_tags)
 
 # ---------------------------------------------------------------------------------------        
-def clear_catalog_annotations(model, clear_tags):
+def clear_catalog_annotations(model, clear_tags, recursive=True):
     '''
     Clear all annotations in the clear_tags for all model elements in the catalog.
     '''
     # clear catalog-level annotations
     for t in clear_tags:
         if t in model.annotations: model.annotations.pop(t, None)
+
+    if not recursive: return
     # clear the rest of annotations
     for schema in model.schemas.values():
         clear_schema_annotations(model, schema.name, clear_tags)

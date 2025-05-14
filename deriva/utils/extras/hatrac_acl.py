@@ -8,43 +8,47 @@ from deriva.core import urlquote, urlunquote
 from deriva.core import HatracStore
 import requests.exceptions
 import re
+from .model import ermrest_groups, humanize_groups, humanize_acls
 
 # ============================================================================
 # add /dev prefix to namespace in the development environment. 
-def adjust_hatrac_namespace(namespace, cfg):
+def adjust_hatrac_namespace(namespace, hatrac_root='/hatrac'):
     """
     In the case that there are multiple catalogs on the same server sharing the same hatrac store,
     each catalog needs a different hatrac prefix. This function address the co-existence of dev.
     """
-    if cfg.is_dev and cfg.shared_dev_env:
-        if namespace.startswith('/hatrac/dev'):
-            return namespace
-        else:
-            namespace = namespace.replace("/hatrac", "/hatrac/dev", 1)
+    if not namespace.startswith(hatrac_root):
+        namespace = namespace.replace("/hatrac", hatrac_root, 1)
         
     return namespace
 
+    
 # ==============================================================================
 # functions for managing acls
 #
 # -- ---------------------------------------------------------------------
 # set one hatrac namespace acl
-def set_hatrac_namespace_acl(store, acl, namespace, cfg):
+def set_hatrac_namespace_acl(store, acl, namespace, hatrac_root='/hatrac'):
     """
-    set acl to one namespace
+    set acl to one namespace.
+    
+    Note: hatrac_root is used to adjust the hatrac namespace prefix, for example,
+    in the case the dev and staging are deployed to the same environment,
+    the dev env for hatrac will be deployed to '/hatrac/dev' instead of '/hatrac'
+    
     """
-    namespace = adjust_hatrac_namespace(namespace, cfg)
-            
+    namespace = adjust_hatrac_namespace(namespace, hatrac_root)
+    print("  INFO: set_hatrac_namespace_acl: %s, acl: %s"  % (namespace, humanize_acls(acl)))
     try :
         if not store.is_valid_namespace(namespace):
             print("INFO: %s is not a valid namespace" % (namespace))
             return
     except Exception as e:
-        #print("EXCEPTION %s: %s " % (namespace, e))
+        print("EXCEPTION %s: %s " % (namespace, e))
         return
         
     for access, roles in acl.items():
-        print("    - namespace: %s seting access %s = %s" % (namespace, access, roles))
+        print("    - namespace: %s seting access %s = %s" % (namespace, access, humanize_groups(roles)))
         store.set_acl(namespace, access, roles)
             
     if False:
@@ -55,26 +59,37 @@ def set_hatrac_namespace_acl(store, acl, namespace, cfg):
         
 # -- ---------------------------------------------------------------------
 # set acl for a list of namespaces
-def set_hatrac_namespaces_acl(store, acl, namespaces, cfg):
+def set_hatrac_namespaces_acl(store, acl, namespaces, hatrac_root='/hatrac'):
     """
-    set acl to a list of namespaces
+    set acl to a list of namespaces.
+    
+    Note: hatrac_root is used to adjust the hatrac namespace prefix, for example,
+    in the case the dev and staging are deployed to the same environment,
+    the dev env for hatrac will be deployed to '/hatrac/dev' instead of '/hatrac'
     """
-    print("======= set_hatrac_namespaces: %s =======" % (namespaces))    
+    print("======= set_hatrac_namespaces_acl: %s =======" % (namespaces))    
     for namespace in namespaces:
-        set_hatrac_namespace_acl(store, acl, namespace, cfg)
+        set_hatrac_namespace_acl(store, acl, namespace, hatrac_root)
 
         
 # --------------------------------------------------------------------
 # set hatrac read access based on user folders
 # NOTE: DO NOT SET OWNER. LET SQL SCRIPT DEAL WITH IT
-def set_hatrac_read_per_user(store, parent_namespaces, cfg):
+def set_hatrac_read_per_user(store, parent_namespaces, hatrac_root='/hatrac'):
     """
-    Assuming that user-id is used as part of the namespace. Grant read-only access to the
-    corresponding uid of that namespace.
+    Assuming that globus userid (uid) is used as part of the namespace. This function removes the existing
+    owner of the child namespace and grants read access to the corresponding globus user assiciated with the uid.
+    The script blindly assume uid is a globusid. 
+    param:
+      - parent_namespaces: the namespace containing different uids e.g. /hatrac/pdb/generated/uid
+
+    Note: hatrac_root is used to adjust the hatrac namespace prefix, for example,
+    in the case the dev and staging are deployed to the same environment,
+    the dev env for hatrac will be deployed to '/hatrac/dev' instead of '/hatrac'
     """
     print("======= set_hatrac_read_per_user: %s =======" % (parent_namespaces))        
     for parent in parent_namespaces:
-        parent = adjust_hatrac_namespace(parent, cfg)
+        parent = adjust_hatrac_namespace(parent, hatrac_root)
         try:
             uid_namespaces = store.retrieve_namespace(parent)
             print(" - UID: %s" % (uid_namespaces))
@@ -84,7 +99,7 @@ def set_hatrac_read_per_user(store, parent_namespaces, cfg):
                 acl = {
                     "subtree-read": [user_id]
                 }
-                set_hatrac_namespace_acl(store, acl, uid_namespace, cfg)
+                set_hatrac_namespace_acl(store, acl, uid_namespace, hatrac_root)
         except Exception as e:
             print("NO node to set READ per user at: %s, %s" % (parent, e))
     
@@ -93,14 +108,21 @@ def set_hatrac_read_per_user(store, parent_namespaces, cfg):
 # set hatrac read access based on user folders.
 # Note: We no longer need to execute this in python script since it will be
 # taken care of in the hourly cron job. 
-def set_hatrac_write_per_user(store, parent_namespaces, cfg):
+def set_hatrac_write_per_user(store, parent_namespaces, hatrac_root='/hatrac'):
     """
-    Assuming that user-id is used as part of the namespace. Grant read/write access to the
-    corresponding uid of that namespace.
+    Assuming that globus userid (uid) is used as part of the namespace. This function removes the existing
+    owner of the child namespace and grants read/write access to the corresponding user assiciated with the uid. 
+    param:
+      - parent_namespaces: the namespace containing different uids e.g. /hatrac/pdb/sbumitted/uid
+
+    Note: hatrac_root is used to adjust the hatrac namespace prefix, for example,
+    in the case the dev and staging are deployed to the same environment,
+    the dev env for hatrac will be deployed to '/hatrac/dev' instead of '/hatrac'
+    
     """
     print("======= set_hatrac_write_per_user: %s =======" % (parent_namespaces))        
     for parent in parent_namespaces:
-        parent = adjust_hatrac_namespace(parent, cfg)
+        parent = adjust_hatrac_namespace(parent, hatrac_root)
         try:
             uid_namespaces = store.retrieve_namespace(parent)
             print(" - UID: %s" % (uid_namespaces))
@@ -115,7 +137,7 @@ def set_hatrac_write_per_user(store, parent_namespaces, cfg):
                     "subtree-update": [user_id],            
                     "subtree-read": [user_id]
                 }
-                set_hatrac_namespace_acl(store, acl, uid_namespace, cfg)
+                set_hatrac_namespace_acl(store, acl, uid_namespace, hatrac_root)
         except Exception as e:
             print("NO node to set WRITE per user at: %s, %s" % (parent, e))
 
@@ -125,16 +147,17 @@ def set_hatrac_write_per_user(store, parent_namespaces, cfg):
 # !!!
 # NOTE: THE HATRAC APIS ARE NOT WORKING AS INTENDED. DO NOT CALL THIS FOR NOW.
 # !!!
-def reset_namespaces_owners(store, cfg):
+def reset_namespaces_owners(store, hatrac_root='/hatrac'):
     """
     Remove existing acls from the subtree.
+
+    Note: hatrac_root is used to adjust the hatrac namespace prefix, for example,
+    in the case the dev and staging are deployed to the same environment,
+    the dev env for hatrac will be deployed to '/hatrac/dev' instead of '/hatrac'
+    
     """
     namespaces = []
-    if cfg.is_dev and cfg.shared_dev_env:
-        rootns = "/hatrac/dev"
-    else:
-        rootns = "/hatrac/"
-        
+    rootns = hatrac_root
     namespaces.extend(store.retrieve_namespace(rootns))
 
     while namespaces:
@@ -153,11 +176,15 @@ def reset_namespaces_owners(store, cfg):
 #
 # -- ---------------------------------------------------------------------
 # create one hatrac namespace
-def create_hatrac_namespace_if_not_exist(store, namespace, cfg):
+def create_hatrac_namespace_if_not_exist(store, namespace, hatrac_root='/hatrac'):
     """
-    Create the provided namespace if not exist
+    Create the provided namespace if not exist.
+
+    Note: hatrac_root is used to adjust the hatrac namespace prefix, for example,
+    in the case the dev and staging are deployed to the same environment,
+    the dev env for hatrac will be deployed to '/hatrac/dev' instead of '/hatrac'
     """
-    namespace = adjust_hatrac_namespace(namespace, cfg)
+    namespace = adjust_hatrac_namespace(namespace, hatrac_root)
 
     try :
         if store.is_valid_namespace(namespace):
@@ -172,9 +199,14 @@ def create_hatrac_namespace_if_not_exist(store, namespace, cfg):
         
 # -- ---------------------------------------------------------------------
 # create a set of hatrac namespaces
-def create_hatrac_namespaces_if_not_exist(store, namespaces, cfg):
+def create_hatrac_namespaces_if_not_exist(store, namespaces, hatrac_root='/hatrac'):
     """
-    Create a list of namespace if not exist
+    Create a list of namespace if not exist.
+
+    Note: hatrac_root is used to adjust the hatrac namespace prefix, for example,
+    in the case the dev and staging are deployed to the same environment,
+    the dev env for hatrac will be deployed to '/hatrac/dev' instead of '/hatrac'
+
     """
     for namespace in namespaces:
-        create_hatrac_namespace_if_not_exist(store, namespace, cfg)
+        create_hatrac_namespace_if_not_exist(store, namespace, hatrac_root)
