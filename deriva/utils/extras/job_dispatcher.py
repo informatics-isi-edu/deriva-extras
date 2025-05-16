@@ -5,6 +5,7 @@ import json
 from deriva.core import PollingErmrestCatalog, HatracStore, init_logging, urlquote, get_credential
 import subprocess
 import logging
+import logging.handlers
 import sys
 import traceback
 
@@ -46,12 +47,9 @@ def init_logger(log_level="info", log_file="/tmp/log/processor.log"):
     logger.addHandler(handler)    
     handler.setFormatter(logging.Formatter(format))
     logger.setLevel(log_level)
-    if file_path: 
-        init_logging(level=log_level, log_format=format, file_path=log_file)
-    else:
-        init_logging(level=log_level, log_format=format)
+    init_logging(level=log_level, log_format=format)
     logger.info("************************ init logger ************************")
-    return(logger)
+    return logger
 
 # =================================================================================================
 # claim_input_data=lambda row: {'RID': row['RID'], 'Processing_Status': "In-progress", 'Status_Detail': None},
