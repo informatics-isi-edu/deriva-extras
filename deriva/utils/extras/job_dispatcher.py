@@ -37,12 +37,12 @@ def init_logger(log_level="info", log_file="/tmp/log/processor.log"):
         'info': logging.INFO,
         'debug': logging.DEBUG
     }
-    log_dir = log_file.rsplit("/", 1)[0]
-    os.system(f'mkdir -p {log_dir}')
     format = '- %(asctime)s: %(levelname)s <%(module)s>: %(message)s'
-    
     logger = logging.getLogger(__name__)
+    
     if log_file:
+        log_dir = log_file.rsplit("/", 1)[0]
+        os.system(f'mkdir -p {log_dir}')
         handler=logging.handlers.TimedRotatingFileHandler(log_file, when='D', backupCount=7)
         handler.setFormatter(logging.Formatter(format))    
         logger.addHandler(handler)
