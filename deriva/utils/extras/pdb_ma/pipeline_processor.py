@@ -35,6 +35,7 @@ from deriva.core import PollingErmrestCatalog, HatracStore, urlquote, get_creden
 from deriva.utils.extras.data import insert_if_not_exist, update_table_rows, delete_table_rows, get_ermrest_query
 from deriva.utils.extras.hatrac import HatracFile
 from deriva.utils.extras.shared import ConfigCLI, DCCTX, cfg
+from deriva.utils.extras.dispatcher import init_logger
 
 logger = logging.getLogger(__name__)
 
@@ -92,40 +93,47 @@ class PipelineProcessor(object):
     subject_prefix = "BASE"                    # e.g. PDB-IHM or MA
     verbose = True
     notify = True
-
     domain_sname = "PDB"
     entry_rcb = None                           # user structure
-    
-    def __init__(self, **kwargs):
-        # -- ermrest and hatrac
-        self.cfg = kwargs.get("cfg", None)
-        self.host = kwargs.get("hostname")
-        self.credential_file = kwargs.get("credential_file", None)
-        self.catalog_id = kwargs.get("catalog_id", None)
-        credentials = kwargs.get("credentials", None)
-        if not credentials: credentials = get_credential(self.host, self.credential_file)
-        if not credentials:
-            raise Exception("ERROR: a proper credential or credential file is required. Provided credential_file: %s" % (credential_file))
-        server = DerivaServer('https', self.host, credentials)
-        self.catalog = server.connect_ermrest(self.catalog_id)
+
+    def __init__(self, catalog=None, store=None, deriva_host=None, catalog_id=None, credential_file=None,
+                 scratch_dir=None, cfg=None, logger=None, log_level="info", log_file="/tmp/log/processor.log", verbose=None,
+                 email_config_file=None, cutoff_time_pacific=None, release_time_utc=None
+                 ):
+        
+        if scratch_dir: self.scratch_dir = scratch_dir
+        os.system(f'mkdir -p {self.scratch_dir}')
+        self.cfg = cfg
+        if verbose: self.verbose = verbose
+        if self.cfg.is_dev:
+            log_file = "%s_dev.log" % (log_file.rsplit(".log", 1)[0])
+        self.logger = logger if logger else self.init_logger(log_level, log_file)
+        
+        # -- ermrest and hatrac        
+        self.catalog = catalog
+        if not self.catalog:
+            self.deriva_host = deriva_host
+            self.credential_file = credential_file
+            self.catalog_id = catalog_id
+            credentials = get_credential(self.deriva_host, self.credential_file)
+            if not credentials:
+                raise Exception("ERROR: a proper credential or credential file is required. Provided credential_file: %s" % (credential_file))
+            server = DerivaServer('https', self.deriva_host, credentials)
+            self.catalog = server.connect_ermrest(self.catalog_id)
         self.catalog.dcctx['cid'] = 'pipeline'
-        self.store = HatracStore('https', self.host, credentials)
-        self.hatrac_file = HatracFile(self.store)
+        self.store = store
+        if not self.store:
+            self.store = HatracStore('https', self.deriva_host, credentials)
         
         # -- local host
         self.local_hostname = socket.gethostname() # processing host
 
         # -- archive/release time
-        if kwargs.get('cutoff_time_pacific', None): self.cutoff_time_pacific = kwargs.get('cutoff_time_pacific') 
-        if kwargs.get('release_time_utc', None): self.release_time_pacific = kwargs.get('release_time_utc')
+        self.cutoff_time_pacific = cutoff_time_pacific
+        self.release_time_pacific = release_time_utc
 
-        # -- log related
-        if kwargs.get('logger', None): self.logger = kwargs.get('logger')
-        if not self.logger: raise Exception("ERROR: logger is required")
-        if kwargs.get('log_dir', None): self.log_dir = kwargs.get('log_dir')         
-        if kwargs.get('log_file', None): self.log_file = kwargs.get('log_file') 
-    
-        if kwargs.get('email_config', None): email_config_file = kwargs.get('email_config')
+        # -- email
+        email_config_file = email_config_file
         if not email_config_file: raise Exception("ERROR: Email configuration is required")
         with open(email_config_file, "r") as f:
             self.email_config = json.load(f)

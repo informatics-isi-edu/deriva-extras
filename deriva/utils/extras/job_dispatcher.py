@@ -46,7 +46,7 @@ def init_logger(log_level="info", log_file="/tmp/log/processor.log"):
     logger.addHandler(handler)    
     handler.setFormatter(logging.Formatter(format))
     logger.setLevel(log_level)
-    if file_path: 
+    if log_file: 
         init_logging(level=log_level, log_format=format, file_path=log_file)
     else:
         init_logging(level=log_level, log_format=format)
