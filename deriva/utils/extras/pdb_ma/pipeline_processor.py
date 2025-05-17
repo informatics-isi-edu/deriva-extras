@@ -140,8 +140,8 @@ class PipelineProcessor(object):
         if not self.email_config: raise Exception("ERROR: Proper email configuration in json format is required")
 
     # -------------------------------------------------------------------
-    @class_method
-    def get_rcb_user(class, catalog, sname, tname, rid):
+    @classmethod
+    def get_rcb_user(cls, catalog, sname, tname, rid):
         """ get RCB row from ERMrest_Client table
         """
         constraints="RID=%s/U:=(M:RCB)=(public:ERMrest_Client:ID)" % (rid)
