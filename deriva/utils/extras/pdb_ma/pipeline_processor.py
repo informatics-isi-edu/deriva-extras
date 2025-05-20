@@ -35,7 +35,7 @@ from deriva.core import PollingErmrestCatalog, HatracStore, urlquote, get_creden
 from deriva.utils.extras.data import insert_if_not_exist, update_table_rows, delete_table_rows, get_ermrest_query
 from deriva.utils.extras.hatrac import HatracFile
 from deriva.utils.extras.shared import ConfigCLI, DCCTX, cfg
-from deriva.utils.extras.dispatcher import init_logger
+from deriva.utils.extras.job_dispatcher import init_logger
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +107,7 @@ class PipelineProcessor(object):
         if verbose: self.verbose = verbose
         if self.cfg.is_dev:
             log_file = "%s_dev.log" % (log_file.rsplit(".log", 1)[0])
-        self.logger = logger if logger else self.init_logger(log_level, log_file)
+        self.logger = logger if logger else init_logger(log_level, log_file)
         
         # -- ermrest and hatrac        
         self.catalog = catalog
