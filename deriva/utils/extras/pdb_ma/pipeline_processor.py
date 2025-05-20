@@ -107,7 +107,7 @@ class PipelineProcessor(object):
         if verbose: self.verbose = verbose
         if self.cfg.is_dev:
             log_file = "%s_dev.log" % (log_file.rsplit(".log", 1)[0])
-        self.logger = logger if logger else self.init_logger(log_level, log_file)
+        self.logger = logger if logger else init_logger(log_level, log_file)
         
         # -- ermrest and hatrac        
         self.catalog = catalog
