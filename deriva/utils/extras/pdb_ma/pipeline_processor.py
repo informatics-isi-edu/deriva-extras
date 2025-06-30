@@ -102,8 +102,9 @@ class PipelineProcessor(object):
                  email_config_file=None, cutoff_time_pacific=None, release_time_utc=None
                  ):
         
-        if scratch_dir: self.scratch_dir = scratch_dir
-        os.system(f'mkdir -p {self.scratch_dir}')
+        if scratch_dir:
+            self.scratch_dir = scratch_dir
+            os.system(f'mkdir -p {self.scratch_dir}')
         self.cfg = cfg
         if verbose: self.verbose = verbose
         if self.cfg.is_dev:
@@ -134,11 +135,12 @@ class PipelineProcessor(object):
         self.release_time_pacific = release_time_utc
 
         # -- email
-        email_config_file = email_config_file
-        if not email_config_file: raise Exception("ERROR: Email configuration is required")
-        with open(email_config_file, "r") as f:
-            self.email_config = json.load(f)
-        if not self.email_config: raise Exception("ERROR: Proper email configuration in json format is required")
+        if email_config_file:
+            email_config_file = email_config_file
+            #if not email_config_file: raise Exception("ERROR: Email configuration is required")
+            with open(email_config_file, "r") as f:
+                self.email_config = json.load(f)
+            if not self.email_config: raise Exception("ERROR: Proper email configuration in json format is required")
 
     # -------------------------------------------------------------------
     @classmethod
