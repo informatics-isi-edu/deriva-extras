@@ -41,7 +41,8 @@ class Config():
     is_dev = False
     shared_dev_env = True # This is needed for adjusting hatrac namespace for dev env.
     catalog_name = None   # This can be used for naming env specific log file
-    hatrac_root = "/hatrac"    
+    hatrac_root = "/hatrac"
+    args = None
     
     def __init__(self):
         pass
@@ -99,6 +100,7 @@ class ConfigCLI(BaseCLI):
         args = self.parser.parse_args()    # parsing the arguments only
 
         cfg.apply_hostname(args.host, args.catalog_id)
+        cfg.args = args
         
         return args
     

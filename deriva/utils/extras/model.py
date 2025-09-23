@@ -33,8 +33,8 @@ per_tag_annotation_tags = [
 ]
 catalog_wide_annotation_tags = [tag["generated"], tag["immutable"], tag["non_deletable"], tag["required"]]
 
-TEXT_ARRAY_COLUMNS = ["Alternate_IDs", "Synonyms", "Related_Synonyms", "Parent_IDs"],
-MARKDOWN_COLUMNS = ["Notes"]
+TEXT_ARRAY_COLUMNS = ["Alternate_IDs", "Synonyms", "Related_Synonyms", "Parent_IDs", "bs3_names"]
+MARKDOWN_COLUMNS = ["Notes", "Comment"]
 INT4_COLUMNS = []
 
 # -- =================================================================================
@@ -99,11 +99,11 @@ def create_vocab_column_defs(cname_list):
     column_defs = []
     # add the rest of columns as text columns
     for cname in cname_list:
-        if cname in TEXT_ARRAY_COLUMNS:
+        if cname.lower() in [ name.lower() for name in TEXT_ARRAY_COLUMNS ]:
             ctype = builtin_types["text[]"]
-        elif cname in MARKDOWN_COLUMNS:
+        elif cname.lower() in [ name.lower() for name in MARKDOWN_COLUMNS ]:
             ctype = builtin_types.markdown
-        elif cname in INT4_COLUMNS:
+        elif cname.lower() in [ name.lower() for name in INT4_COLUMNS ]:
             ctype = builtin_types.int4
         else:
             ctype = builtin_types.text
@@ -121,11 +121,11 @@ def create_vocab_column_defs(cname_list):
 # -------------------------------------------------------
 
 # Create a vocabulary table if it does not exixt
-def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, other_cnames=[], name_type="text"):
+def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms=False, other_cnames=[], name_type="text", lower_case=False):
     
     column_defs = [
         Column.define(
-            "Name",
+            "Name" if not lower_case else "name",
             builtin_types[name_type],
             nullok=False
         )
@@ -134,7 +134,7 @@ def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, oth
     if has_synnonyms is True:
         column_defs.append(
             Column.define(
-                "Synonyms",
+                "Synonyms" if not lower_case else "synonyms",
                 builtin_types['text[]'],
                 nullok=True
             )
@@ -142,7 +142,7 @@ def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, oth
     
     column_defs.append(
         Column.define(
-            "Description",
+            "Description" if not lower_case else "description",
             builtin_types.markdown,
             nullok=True
         )
@@ -155,8 +155,8 @@ def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, oth
         Key.define(["RID"],
                    constraint_names=[[schema_name, table_name + "_RID_key"]]
                    ),
-        Key.define(["Name"],
-                   constraint_names=[[schema_name, table_name + "_Name_key"]]
+        Key.define(["Name" if not lower_case else "name"],
+                   constraint_names=[[schema_name, table_name + ("_Name_key" if not lower_case else "_name_key")]]
                    )        
     ]
     
@@ -176,7 +176,7 @@ def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms, oth
 # ----------------------------------------------------------------
 
 # create a vocabulary table if it does not exixt
-def create_vocabulary_tdoc(schema_name, table_name, table_comment, ID_prefix="isrd", URI_catalog_id=None, other_cnames=[]):
+def create_vocabulary_tdoc(schema_name, table_name, table_comment, ID_prefix="isrd", URI_catalog_id=None, other_cnames=[], provide_name_key=True):
 
     # overwrite Description to be nullable
     if table_name in ['Species', 'Annotated_Term']:
@@ -210,6 +210,10 @@ def create_vocabulary_tdoc(schema_name, table_name, table_comment, ID_prefix="is
         )
     ]
     
+    if provide_name_key: key_defs.append(
+            Key.define( ["Name"], constraint_names=[[schema_name, table_name + "_Name_key"]] )
+    )
+    
     fkey_defs = []
 
     table_def = Table.define_vocabulary(
@@ -224,7 +228,72 @@ def create_vocabulary_tdoc(schema_name, table_name, table_comment, ID_prefix="is
     )
     return table_def
 
+# ----------------------------------------------------------------
+def create_custom_vocabulary_tdoc(schema_name, table_name, table_comment, id_prefix="isrd", uri_catalog_id=None, other_cnames=[], provide_name_key=True, key_defs=[], fkey_defs=[]):
+    column_defs = [
+            Column.define(
+                "id",
+                builtin_types['ermrest_curie'],
+                nullok=False,
+                default='%s:{RID}' % (id_prefix),
+            ),
+            Column.define(
+                "uri",
+                builtin_types['ermrest_uri'],                
+                nullok=False,
+                default='/id/{RID}' if not uri_catalog_id else '/id/%s/{RID}' % (uri_catalog_id),
+            ),
+            Column.define(
+                "name",
+                builtin_types['text'],
+                nullok=False
+            ),
+            Column.define(
+                "synonyms",
+                builtin_types['text[]'],
+                nullok=True
+            ),
+            Column.define(
+                "description",
+                builtin_types.markdown,
+                nullok=True
+            ),
+    ]
+    
+    if other_cnames: column_defs.extend(create_vocab_column_defs(other_cnames))
+    
+    table_key_defs = [
+        Key.define(["RID"],
+                   constraint_names=[[schema_name, table_name + "_RID_key"]]
+                   ),
+        Key.define(["id"],
+                   constraint_names=[[schema_name, table_name + "_id_key"]]
+                   ),
+        Key.define(["uri"],
+                   constraint_names=[[schema_name, table_name + "_uri_key"]]
+                   ),
+        Key.define(["id", "name"],
+                   constraint_names=[[schema_name, table_name + "_id_name_key"]]
+                   ),
+    ]
+    
+    if provide_name_key: table_key_defs.append(
+            Key.define( ["name"], constraint_names=[[schema_name, table_name + "_name_key"]] )
+    )
+    
+    table_key_defs.extend(key_defs)
+    
 
+    table_def = Table.define(
+        table_name,
+        column_defs,
+        key_defs=table_key_defs,
+        fkey_defs=fkey_defs,
+        comment=table_comment,
+        provide_system=True
+    )
+    return table_def
+    
 # -- ===============================================================
 # this section contains the helper functions for print model extras
 #
