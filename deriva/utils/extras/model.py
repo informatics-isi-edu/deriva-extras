@@ -33,7 +33,7 @@ per_tag_annotation_tags = [
 ]
 catalog_wide_annotation_tags = [tag["generated"], tag["immutable"], tag["non_deletable"], tag["required"]]
 
-TEXT_ARRAY_COLUMNS = ["Alternate_IDs", "Synonyms", "Related_Synonyms", "Parent_IDs", "bs3_names"]
+TEXT_ARRAY_COLUMNS = ["Alternate_IDs", "Synonyms", "Related_Synonyms", "Parent_IDs", "bs3_names", "alternate_ids"]
 MARKDOWN_COLUMNS = ["Notes", "Comment"]
 INT4_COLUMNS = []
 
@@ -97,6 +97,7 @@ def drop_column_if_exist(model, schema_name, table_name, column_name):
 # -------------------------------------------------------
 def create_vocab_column_defs(cname_list):
     column_defs = []
+
     # add the rest of columns as text columns
     for cname in cname_list:
         if cname.lower() in [ name.lower() for name in TEXT_ARRAY_COLUMNS ]:
@@ -115,7 +116,8 @@ def create_vocab_column_defs(cname_list):
                 nullok=True
             )
         )
-        
+
+    #print("create_vocab_column_defs: %s" % (json.dumps(column_defs, indent=4)))
     return(column_defs)
 
 # -------------------------------------------------------
