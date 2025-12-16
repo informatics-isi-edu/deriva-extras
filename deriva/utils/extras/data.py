@@ -44,9 +44,47 @@ def approx_json_bytecnt(data):
         return 4
     else:
         raise TypeError('cannot estimate size of unexpected data %r' % data)
-# ---------------------------------------------------------------
 
-def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=1000000):
+# ---------------------------------------------------------------
+def get_batch_len(payload, index=0, batch_size=10000, batch_bytes=2000000, decrement=1000):
+    """
+    Calculate batch length based payload data. Try to fit the batch based on 2 heuristics:
+    1) try batch_size and backoff based on decrement amount until fits
+    2) Iterate over the payload and fill in one by one
+    Note: Ensure a minimum batch size of one is returned
+    """
+    #print("payload: %s" % (payload))
+
+    nrows = batch_size
+    batch = payload[index:index+nrows]
+    bytes = approx_json_bytecnt(batch)
+    # -- try decrement batch_size by decrement amount first
+    while bytes > batch_bytes:
+        #print("!!! bytes: %d > batch_bytes: %d  nrows: %d --> Reduce batch size by %s" % (bytes, batch_bytes, nrows, decrement))        
+        nrows = nrows - decrement
+        if nrows < 0: nrows = 0
+        batch = payload[index:index+nrows]
+        bytes = approx_json_bytecnt(batch)
+
+    # -- if the above doesn't work, iterate over each array element, add one by one.  
+    if nrows <= 0:
+        #print("+++ Iterate over payload")
+        total_bytes = 0
+        for i in range(len(payload)-index):
+            total_bytes += approx_json_bytecnt(payload[index+i])
+            #print("  index:%d,  i: %d, bytes: %d, total_bytes: %d" % (index, i, approx_json_bytecnt(payload[index+i]), total_bytes))
+            if total_bytes > batch_bytes:
+                break
+        nrows = i  # nrows = the previous index before break + 1 (for size) e.g. i - 1 + 1
+
+    # -- ensure a batch size of 1        
+    if nrows <= 0: nrows = 1
+    
+    #print("-- index: %d, nrows: %d, bytecounts: %d, bytes: %s " % (index, nrows, approx_json_bytecnt(payload[index:index+nrows]), payload[index:index+nrows]))
+    return nrows 
+
+# ---------------------------------------------------------------
+def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000):
     if not payload:
         return []
 
@@ -67,7 +105,10 @@ def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None
         while bytes > batch_bytes:
             nrows = nrows - 1000
             batch = payload[index:index+nrows]            
-            bytes = approx_json_bytecnt(batch)            
+            bytes = approx_json_bytecnt(batch)
+            
+        if nrows <= 0: nrows = 1
+        batch = payload[index:index+nrows]
         #print("index=%d nrows=%d bytes=%d" % (index, nrows, bytes))
         resp = catalog.post(
             "/entity/%s:%s?onconflict=skip%s" % (urlquote(schema_name), urlquote(table_name), defaults_str),
@@ -86,7 +127,6 @@ def update_table_rows(catalog, schema_name, table_name, keys=["RID"], column_nam
     model = catalog.getCatalogModel()
     if not payload:
         return []
-
     
     # if updaed_cname is NULL, use all columns except system columns
     if not column_names:
@@ -109,11 +149,14 @@ def update_table_rows(catalog, schema_name, table_name, keys=["RID"], column_nam
     while index < payload_len:
         batch = payload[index:index+nrows]
         bytes = approx_json_bytecnt(batch)
-        while bytes > batch_bytes:
+        while bytes > batch_bytes:  # TODO: better backoff algorithm
             nrows = nrows - 1000
             batch = payload[index:index+nrows]            
-            bytes = approx_json_bytecnt(batch)            
-        #print("updating rows[%d:%d](%d bytes): %s:%s => \n%s " % (index, nrows, bytes, schema_name, table_name, json.dumps(batch, indent=4, sort_keys=True)))
+            bytes = approx_json_bytecnt(batch)
+            
+        if nrows <= 0: nrows = 1
+        batch = payload[index:index+nrows]
+        #print("- updating rows[%d:%d](%d bytes): %s:%s => \n%s " % (index, nrows, bytes, schema_name, table_name, json.dumps(batch, indent=4, sort_keys=True)))
         resp = catalog.put(
             "/attributegroup/%s:%s/%s;%s" % (urlquote(schema_name), urlquote(table_name), ','.join([ urlquote(k) for k in keys ]), cnames),
             json=batch
@@ -121,7 +164,7 @@ def update_table_rows(catalog, schema_name, table_name, keys=["RID"], column_nam
         updated.extend(resp.json())
         print("  - updated rows[%d:%d](%d bytes): %s:%s " % (index, index+nrows, bytes, schema_name, table_name))
         index = index + nrows
-        nrows = batch_size
+        nrows = batch_size  # reset nrows        
 
     return(updated)
 
@@ -340,10 +383,19 @@ if __name__ == "__main__":
     catalog.dcctx['cid'] = "cli/test"
     #store = HatracStore("https", args.host, credentials)
 
-    constraints = "T:=Vocab:System_Generated_File_Type/A:=Vocab:Archive_Category/$M"
-    attributes = ["RID2:=M:RID","File_Type:=M:File_Type","Archive_Category:=A:Name","Agg:=array(A:Directory_Name)"]
+    payload=[ { "x": "0123456789-%d" % (i) } for i in range(100) ]
+    batch_bytes=400
+    index = 0
+    while index < len(payload):
+        nrows = get_batch_len(payload, index=index, batch_size=40, batch_bytes=batch_bytes, decrement=8)
+        print("==> index: %d, nrows: %d, bytes: %d --> %s" % (index, nrows, approx_json_bytecnt(payload[index:index+nrows]), payload[index:index+nrows]))
+        index = index + nrows
+
+    
+    #constraints = "T:=Vocab:System_Generated_File_Type/A:=Vocab:Archive_Category/$M"
+    #attributes = ["RID2:=M:RID","File_Type:=M:File_Type","Archive_Category:=A:Name","Agg:=array(A:Directory_Name)"]
     #key2rows = get_key2rows(catalog, "PDB", "Entry_Generated_File", constraints=constraints, keys=["RID"], attributes=attributes, limit=10)
     #print(json.dumps(key2rows, indent=4))
 
     #2-RT98
-    delete_table_rows(catalog, "PDB", "entry", key="RID", values=['3-YT7G'])
+    #delete_table_rows(catalog, "PDB", "entry", key="RID", values=['3-YT7G'])
