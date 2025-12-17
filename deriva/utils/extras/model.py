@@ -283,7 +283,7 @@ def create_custom_vocabulary_tdoc(schema_name, table_name, table_comment, id_pre
             Key.define( ["name"], constraint_names=[[schema_name, table_name + "_name_key"]] )
     )
     
-    table_key_defs.extend(key_defs)
+    if key_defs: table_key_defs.extend(key_defs)
     
 
     table_def = Table.define(
