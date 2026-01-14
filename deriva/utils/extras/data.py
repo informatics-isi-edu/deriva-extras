@@ -235,7 +235,7 @@ def insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None
             constraints = ";".join(disjunctions)
     print("  - getting existing rows with constraints = %s" % (constraints))
     # -- TODO: check for URL length limitation based on constraints. Retrieve only update_columns instead of all rows
-    existing = get_entities(catalog, schema_name, table_name, constraints=constraints, keys=["RID"], attr_list=attr_list)
+    existing = get_ermrest_query(catalog, schema_name, table_name, constraints=constraints, keys=["RID"], attr_list=attr_list)
     #print("  - Getting existing rows with constraints %s from ermrest [%d]: %s" % (constraints, len(existing), json.dumps(existing, indent=4)))
     keys2existing = { get_key_for_dict(keys, row) : row for row in existing }
     
