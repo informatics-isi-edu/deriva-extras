@@ -194,6 +194,9 @@ class HatracFile:
                                    
     # ------------------------------------------------------------------                
     def clear(self):
+        """
+        set all file related properties to None
+        """
         self.upload_url = None 
         self.hatrac_url = None
         self.file_path = None
@@ -208,6 +211,9 @@ class HatracFile:
 
     # ------------------------------------------------------------------                
     def print(self):
+        """
+        print existing properties
+        """
         print("file_path: %s, file_name: %s" % (self.file_path, self.file_name))
         print("file_extension: %s, content_type: %s" % (self.file_extension, self.content_type))        
         print("file_bytes: %d" % (self.file_bytes))
@@ -217,10 +223,14 @@ class HatracFile:
         print("hatrac_url: %s" % (self.hatrac_url))
         
     # ------------------------------------------------------------------            
-    def upload_file(self, fpath, upload_url, file_name=None, hashes=["md5"], content_type=None, verbose=False, allow_versioning=True):
+    def upload_file(self, fpath, upload_url, file_name=None, hashes=["md5"], content_type=None, verbose=False, allow_versioning=True, force=False):
         """
         upload_file prepares file related metadata, upload the file to hatrac, and store the versioned hatrac url in the structure.
-        TODO: add setting content-type logic. With s3, hatrac's guess of content-type is limited
+        TODO: add setting content-type logic. With s3, hatrac's guess of content-type is limited.
+
+        allow_versioning: controls whether the same object name can have multiple versions. This setting ensures that even if the bytes of a previously
+        uploaded file have changed, no upload will be attempted. Regardless of this flag, the same file content will not be uploaded.
+        force: force the file to be uploaded even when the content is the same.
         """
         self.clear()
         self.file_path = fpath        
@@ -243,7 +253,7 @@ class HatracFile:
         if verbose: print("HatracFile.upload_file: fpath: %s, url: %s, content_type: %s md5_base64:%s" % (self.file_path, self.upload_url, self.content_type, self.md5_base64))
         content_disposition="filename*=UTF-8''%s" % (self.file_name)
         #hatrac_url = self.store.put_obj(upload_file_url, file_path, md5=md5_base64, content_disposition="filename*=UTF-8''%s" % (file_name), allow_versioning=False)
-        self.hatrac_url = self.store.put_loc(self.upload_url, self.file_path, md5=self.md5_base64, content_disposition=content_disposition, content_type=self.content_type, chunked=True, chunk_size=self.chunk_size, allow_versioning=allow_versioning)
+        self.hatrac_url = self.store.put_loc(self.upload_url, self.file_path, md5=self.md5_base64, content_disposition=content_disposition, content_type=self.content_type, chunked=True, chunk_size=self.chunk_size, allow_versioning=allow_versioning, force=force)
         
     # ------------------------------------------------------------------    
     def download_file(self, hatrac_url, destination_dir, file_name=None, hashes=[], verbose=False):
