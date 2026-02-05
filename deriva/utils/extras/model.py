@@ -4,7 +4,7 @@ import sys
 import json
 from deriva.core import ErmrestCatalog, AttrDict, get_credential, DEFAULT_CREDENTIAL_FILE, tag, urlquote, DerivaServer, get_credential, BaseCLI
 from deriva.core.ermrest_model import builtin_types, Schema, Table, Column, Key, ForeignKey
-from deriva.core import urlquote, urlunquote
+from deriva.core import urlquote, urlunquote, topo_sorted, topo_ranked
 import argparse
 import re
 
@@ -39,10 +39,11 @@ INT4_COLUMNS = []
 
 # -- =================================================================================
 # -- model changes utilities
-# --
+# -- ------------------------------
 
-# add table if not exist or update if exist
 def create_schema_if_not_exist(model, schema_name, schema_comment=None):
+    """Create schema if not exist
+    """
     if schema_name not in model.schemas:
         
         model.create_schema(Schema.define(schema_name, schema_comment))
@@ -50,8 +51,10 @@ def create_schema_if_not_exist(model, schema_name, schema_comment=None):
 
 # ----------------------------------------------------------------
 
-# Add table if not exist or update if exist
 def create_table_if_not_exist(model, schema_name, tdoc):
+    """Create table if not exist
+    """
+    
     schema = model.schemas[schema_name]
     if tdoc["table_name"] not in schema.tables.keys():
         print('creating table %s:%s' % (schema_name, tdoc["table_name"]))
@@ -60,6 +63,9 @@ def create_table_if_not_exist(model, schema_name, tdoc):
 # ----------------------------------------------------------------
 
 def drop_table_if_exist(model, schema_name, table_name):
+    """Drop table if exist
+    """
+
     if schema_name not in model.schemas.keys():
         raise TypeError("ERROR: drop table: schema %s doesn't exist" % (schema_name))
 
@@ -72,6 +78,9 @@ def drop_table_if_exist(model, schema_name, table_name):
 
 # ----------------------------------------------------------------
 def create_column_if_not_exist(model, schema_name, table_name, column_def):
+    """Create column if not exist
+    """
+    
     if schema_name not in model.schemas.keys() or table_name not in model.schemas[schema_name].tables.keys():
         raise TypeError("ERROR: either schema %s or table %s doesn't exist" % (schema_name, table_name))
     
@@ -84,6 +93,9 @@ def create_column_if_not_exist(model, schema_name, table_name, column_def):
 # ----------------------------------------------------------------
 # Check that schema and table exist before dropping column
 def drop_column_if_exist(model, schema_name, table_name, column_name):
+    """Drop column if exist
+    """
+    
     if schema_name not in model.schemas.keys() or table_name not in model.schemas[schema_name].tables.keys():
         raise TypeError("ERROR: either schema %s or table %s doesn't exist" % (schema_name, table_name))
     
@@ -96,6 +108,9 @@ def drop_column_if_exist(model, schema_name, table_name, column_name):
         
 # -------------------------------------------------------
 def create_vocab_column_defs(cname_list):
+    """Create vocab column definition
+    """
+    
     column_defs = []
 
     # add the rest of columns as text columns
@@ -122,8 +137,9 @@ def create_vocab_column_defs(cname_list):
 
 # -------------------------------------------------------
 
-# Create a vocabulary table if it does not exixt
 def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms=False, other_cnames=[], name_type="text", lower_case=False):
+    """Create vocab (for locally defined terms) tdoc
+    """
     
     column_defs = [
         Column.define(
@@ -177,8 +193,9 @@ def create_vocab_tdoc(schema_name, table_name, table_comment, has_synnonyms=Fals
 
 # ----------------------------------------------------------------
 
-# create a vocabulary table if it does not exixt
 def create_vocabulary_tdoc(schema_name, table_name, table_comment, ID_prefix="isrd", URI_catalog_id=None, other_cnames=[], provide_name_key=True):
+    """Create vocabulary tdoc
+    """
 
     # overwrite Description to be nullable
     if table_name in ['Species', 'Annotated_Term']:
@@ -232,6 +249,8 @@ def create_vocabulary_tdoc(schema_name, table_name, table_comment, ID_prefix="is
 
 # ----------------------------------------------------------------
 def create_custom_vocabulary_tdoc(schema_name, table_name, table_comment, id_prefix="isrd", uri_catalog_id=None, other_cnames=[], provide_name_key=True, key_defs=[], fkey_defs=[]):
+    """Create custom vocabulary tdoc where all column names are lower cases
+    """
     column_defs = [
             Column.define(
                 "id",
@@ -295,10 +314,60 @@ def create_custom_vocabulary_tdoc(schema_name, table_name, table_comment, id_pre
         provide_system=True
     )
     return table_def
+
+# -- ===============================================================
+# Model helper functions
+# -- ------------------------------
+
+def topo_sort_ranked(depmap):
+    """Calculate the toploical sorting and its rank. This function is used to sort the
+    ERMrest tables based on the foreign keys dependency to guide the insert operation.
+    For example, tables with no outbound foreign keys will be in the front of the list.
+        
+    Args:
+        depmap: { item: [required_item, ...], ... }
+        The per-item required_item iterables must allow revisiting on multiple iterations.
+        
+    Returns:
+        dictionary of {rank: list, ...} of items by topological rank.
+        
+    Raises ValueError if a required_item cannot be satisfied in any order.
+    """
     
+    """
+    # TO DELETE
+    satisfied = set()
+    depmap = { item: set(requires) for item, requires in depmap.items() }
+    rank = 0
+    ranked = {}
+
+    while depmap:
+        additions = []
+        for item, requires in list(depmap.items()):
+            if requires.issubset(satisfied):
+                additions.append(item)
+                
+        if not additions:
+            raise ValueError(("unsatisfiable", depmap))
+
+        satisfied.update(additions)
+        ranked[rank] = additions
+        rank += 1
+
+        for item in additions:
+            del depmap[item]
+
+    return ranked
+    """
+    rank_list = topo_ranked(depmap)
+    rank_dict = {i: rank_list[i] for i in range(len(rank_list))}
+    
+    return rank_dict
+
+
 # -- ===============================================================
 # this section contains the helper functions for print model extras
-#
+# -- --------------------------
 
 
 FKEY_ACLS = {
@@ -308,6 +377,9 @@ FKEY_ACLS = {
 
 # -----------------------------------------------------------
 def set_ermrest_groups(catalog):
+    """set ERMrest groups
+    """
+    
     # ermrest_groups["https://auth.globus.org/6068dc4b-73ee-4143-b606-29c6780f582f"] = 'rbkcc',
     global ermrest_groups
     resp = catalog.get("/attribute/public:ERMrest_Group/ID,Display_Name")
@@ -323,6 +395,11 @@ def set_ermrest_groups(catalog):
 # ----------------------------------------------------------
 # replace group id with group name based on the value stored in ermrest
 def humanize_groups(groups):
+    """Humanize group by converting from group uuid to name based on ERMrest_Group table.
+       
+    TODOs: Support better APIs
+    """
+    global ermrest_groups
     hgroups = []
     for group in groups:
         if group in ermrest_groups.keys():
@@ -349,9 +426,12 @@ def humanize_acls(acls):
     return str
 
 # ----------------------------------------------------------
-# replace group id with group name based on the value stored in ermrest
-# Make sure not to mutate the original acl_bindings!
 def humanize_acl_bindings(acl_bindings):
+    """Humanize ACL bindings.
+    Replace group id with group name based on the value stored in ermrest
+    Make sure not to mutate the original acl_bindings!
+    
+    """
     #print("---%s---" % (acl_bindings))
     str = acl_bindings.copy()
     for name, acl_binding in acl_bindings.items():
@@ -383,10 +463,11 @@ def format_acl_bindings(acl_bindings, humanize=True):
     return str
     
 # ----------------------------------------------------------
-'''
-  print_table_model_extras prints annotations, acls, and acl_bindings
-'''
 def print_table_model_extras(model, schema_name, table_name, annotations=True, acls=True, acl_bindings=True, exclude_default_fkey=True, humanize=True):
+    '''
+    print_table_model_extras prints annotations, acls, and acl_bindings
+    '''
+    
     default_fkey_acls = {"insert": ["*"], "update": ["*"]}    
     table = model.schemas[schema_name].tables[table_name]
     
@@ -412,10 +493,11 @@ def print_table_model_extras(model, schema_name, table_name, annotations=True, a
 
 
 # ----------------------------------------------------------
-'''
-  print_schema_model_extras prints annotations, acls, and acl_bindings
-'''
 def print_schema_model_extras(model, schema_name, annotations=True, acls=True, acl_bindings=True, exclude_default_fkey=True):
+    '''
+    print_schema_model_extras prints annotations, acls, and acl_bindings
+    '''
+    
     default_fkey_acls = {"insert": ["*"], "update": ["*"]}    
     schema = model.schemas[schema_name]
 
