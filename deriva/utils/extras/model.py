@@ -4,7 +4,7 @@ import sys
 import json
 from deriva.core import ErmrestCatalog, AttrDict, get_credential, DEFAULT_CREDENTIAL_FILE, tag, urlquote, DerivaServer, get_credential, BaseCLI
 from deriva.core.ermrest_model import builtin_types, Schema, Table, Column, Key, ForeignKey
-from deriva.core import urlquote, urlunquote, topo_sorted, topo_ranked
+from deriva.core import urlquote, urlunquote #, topo_sorted, topo_ranked # to be included later
 import argparse
 import re
 
@@ -319,6 +319,91 @@ def create_custom_vocabulary_tdoc(schema_name, table_name, table_comment, id_pre
 # Model helper functions
 # -- ------------------------------
 
+"""
+topo_ranked and topo_sorted: to refer to the version the deriva-py
+after moving pdb workflow to newer OS.
+"""
+def topo_ranked(depmap):
+    """Return list-of-sets representing values in ranked tiers as a topological partial order.
+
+    :param depmap: Dictionary mapping of values to required values.
+
+    The entire set of values to rank must be represented as keys in
+    depmap, and therefore must be hashable. For each depmap key, the
+    corresponding value should be a set of required values, or an
+    iterable of required values suitable to pass to set(). An empty
+    set or iterable represents a lack of requirements to satisfy for
+    a given key value.
+
+    The result list provides a partial order satisfying the
+    requirements from the dependency map. Each entry in the list is a
+    set representing a tier of values with equal rank. Values in a
+    given tier do not require any value from a tier at a higher index.
+
+    Raises ValueError if a requirement cannot be satisfied in any order.
+
+    """
+    def opportunistic_set(s):
+        if isinstance(s, set):
+            return s
+        elif isinstance(s, Iterable):
+            return set(s)
+        else:
+            raise TypeError(f"bad depmap operand to topo_ranked(), got {type(s)} instead of expected set or iterable")
+
+    if not isinstance(depmap, dict):
+        raise TypeError(f"bad depmap operand to topo_ranked(), got {type(depmap)} instead of expected dict")
+
+    # make a mutable copy that supports our incremental algorithm
+    depmap = {
+        k: opportunistic_set(v)
+        for k, v in depmap.items()
+    }
+
+    ranked = []
+    satisfied = set()
+
+    while depmap:
+        tier = set()
+        ranked.append(tier)
+
+        for item, requires in list(depmap.items()):
+            if requires.issubset(satisfied):
+                tier.add(item)
+                del depmap[item]
+
+        # sanity-check for cyclic or unreachable requirements
+        if not tier:
+            raise ValueError(f"bad operand depmap to topo_ranked(), unsatisfiable={depmap}")
+
+        satisfied.update(tier)
+
+    return ranked
+
+def topo_sorted(depma):
+    """Return list of items topologically sorted.
+
+    :param depmap: Dictionary mapping of values to required values.
+
+    This is a simple wrapper to flatten the partially ordered output
+    of topo_ranked(depmap) into an arbitrary total order.
+
+    The entire set of values to sort must be represented as keys in
+    depmap, and therefore must be hashable. For each depmap key, the
+    corresponding value should be a set of required values, or an
+    iterable of required values suitable to pass to set(). An empty
+    set or iterable represents a lack of requirements to satisfy for
+    a given key value.
+
+    The result list provides a total order satisfying the requirements
+    from the dependency map. Values at lower indices do not require
+    values at higher indices.
+
+    Raises ValueError if a requirement cannot be satisfied in any order.
+
+    """
+    return [ v for tier in topo_ranked(depmap) for v in tier ]
+
 def topo_sort_ranked(depmap):
     """Calculate the toploical sorting and its rank. This function is used to sort the
     ERMrest tables based on the foreign keys dependency to guide the insert operation.
@@ -334,31 +419,6 @@ def topo_sort_ranked(depmap):
     Raises ValueError if a required_item cannot be satisfied in any order.
     """
     
-    """
-    # TO DELETE
-    satisfied = set()
-    depmap = { item: set(requires) for item, requires in depmap.items() }
-    rank = 0
-    ranked = {}
-
-    while depmap:
-        additions = []
-        for item, requires in list(depmap.items()):
-            if requires.issubset(satisfied):
-                additions.append(item)
-                
-        if not additions:
-            raise ValueError(("unsatisfiable", depmap))
-
-        satisfied.update(additions)
-        ranked[rank] = additions
-        rank += 1
-
-        for item in additions:
-            del depmap[item]
-
-    return ranked
-    """
     rank_list = topo_ranked(depmap)
     rank_dict = {i: rank_list[i] for i in range(len(rank_list))}
     

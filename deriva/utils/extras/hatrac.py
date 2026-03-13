@@ -92,6 +92,10 @@ def get_hatrac_metadata(store, object_path):
     return md
 
 # ===================================================================================
+"""
+Hatrar files
+"""
+
 @dataclass
 class HatracFile:
     """
@@ -112,6 +116,7 @@ class HatracFile:
     default_content_type: str = 'application/octet-stream'
     chunk_size: int = 5*1024*1024 #25*1024*1024
 
+    # TODO: fix the init function. 
     def init(self, store, file_path=None, hashes=["md5"]):
         self.store = store
         if not file_path: return
@@ -302,8 +307,6 @@ class HatracFile:
             assert self.sha256_hex == sha256, "Mismatched md5: %s vs %s" % (self.sha256_hex, sha256)
 
     # ------------------------------------------------------------------
-    def print(self):
-        pass
 
 # ===================================================================================
 
