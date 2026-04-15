@@ -380,7 +380,7 @@ def topo_ranked(depmap):
 
     return ranked
 
-def topo_sorted(depma):
+def topo_sorted(depmap):
     """Return list of items topologically sorted.
 
     :param depmap: Dictionary mapping of values to required values.
