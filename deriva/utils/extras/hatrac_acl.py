@@ -93,7 +93,7 @@ def set_hatrac_namespaces_acl(store, acl, namespaces, hatrac_root='/hatrac', ver
     """
     if verbose: print("======= set_hatrac_namespaces_acl: %s =======" % (namespaces))    
     for namespace in namespaces:
-        set_hatrac_namespace_acl(store, acl, namespace, hatrac_root)
+        set_hatrac_namespace_acl(store, acl, namespace, hatrac_root, verbose=verbose)
         
 # --------------------------------------------------------------------
 # set hatrac read access based on user folders

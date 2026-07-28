@@ -23,7 +23,7 @@ DCCTX = {
     "pipeline": "pipeline",
     "pipeline/pdbdev": "pipeline/pdbdev",
     "cli": "cli",
-    "cli/clear_entry" : "cli/clr_ent",
+    "cli/test" : "cli/test",
     "cli/history": "cli/history",
     "cli/remedy": "cli/remedy",
 }
@@ -95,9 +95,8 @@ class ConfigCLI(BaseCLI):
         self.parser.add_argument('--dry-run', action="store_true", help="run the script without model.apply()", default=False)
         
     def parse_cli(self):
-        global env
-        #args = super().parse_cli()        # parsing the arguments + initialize logging (stdout)
-        args = self.parser.parse_args()    # parsing the arguments only
+        args = super().parse_cli()        # parsing the arguments + initialize logging (stdout)
+        #args = self.parser.parse_args()    # parsing the arguments only
 
         cfg.apply_hostname(args.host, args.catalog_id)
         cfg.args = args

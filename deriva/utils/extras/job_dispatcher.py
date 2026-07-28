@@ -2,17 +2,21 @@
 
 import os
 import json
-from deriva.core import PollingErmrestCatalog, HatracStore, init_logging, urlquote, get_credential
 import subprocess
 import logging
 import logging.handlers
 import sys
 import traceback
+import random
+import time
+
+from deriva.core import PollingErmrestCatalog, HatracStore, init_logging, urlquote, get_credential, ConcurrentUpdate, add_logging_level
 
 from deriva.utils.extras.data import insert_if_not_exist, get_ermrest_query, delete_table_rows
 from deriva.utils.extras.model import create_vocabulary_tdoc, create_vocab_tdoc, create_table_if_not_exist, create_schema_if_not_exist
 from deriva.utils.extras.shared import DCCTX, ConfigCLI, cfg
 
+logger = logging.getLogger(__name__)
 
 class DispatcherRuntimeError (RuntimeError):
     pass
@@ -25,9 +29,18 @@ class DispatcherBadDataError (RuntimeError):
 
 
 # ===================================================================================
-# logformatter = logging.Formatter('%(name)s[%(process)d.%(thread)d]: %(message)s')
+def logger_exists(logger_name):
+    # The Root Logger doesn't live in the dictionary, handle it explicitly
+    if logger_name == "":
+        return True
+        
+    # Check the global manager dictionary
+    manager = logging.Logger.manager
+    return logger_name in manager.loggerDict
 
-def init_logger(log_level="info", log_file="/tmp/log/processor.log"):
+
+# logformatter = logging.Formatter('%(name)s[%(process)d.%(thread)d]: %(message)s')
+def init_logger(log_level="info", log_file="/tmp/log/processor.log", name=None, capture_warnings=True):
     """
     Set logger. This should only be called once for every process
     """
@@ -37,20 +50,51 @@ def init_logger(log_level="info", log_file="/tmp/log/processor.log"):
         'info': logging.INFO,
         'debug': logging.DEBUG
     }
-    format = '- %(asctime)s: %(levelname)s <%(module)s>: %(message)s'
-    logger = logging.getLogger(__name__)
+
+    # Safely register TRACE only if it doesn't exist yet
+    if not hasattr(logging, "TRACE"):
+        add_logging_level("TRACE", logging.DEBUG - 5)
+        
+    logging.captureWarnings(capture_warnings)
+
+    # Setup logger name (Defaulting to module name if blank)
+    logger_name = name if name else __name__
+    logger = logging.getLogger(logger_name)
     
-    if log_file:
-        log_dir = log_file.rsplit("/", 1)[0]
-        os.system(f'mkdir -p {log_dir}')
-        handler=logging.handlers.TimedRotatingFileHandler(log_file, when='D', backupCount=7)
-        handler.setFormatter(logging.Formatter(format))    
-        logger.addHandler(handler)
-    
-    log_level = __LOGLEVEL[log_level]
+    # set level
+    log_level = __LOGLEVEL.get(log_level.lower(), logging.INFO)
     logger.setLevel(log_level)
-    init_logging(level=log_level, log_format=format)
-    logger.info("************************ init logger ************************")
+    
+    # Clear any existing handlers to prevent duplicate log issues
+    #if logger.hasHandlers(): logger.handlers.clear()
+        
+    # Prevent duplicate handlers if this function runs multiple times    
+    if not logger.handlers:
+        # set format
+        log_format = f'- %(asctime)s: %(levelname)s <%(module)s>: %(message)s'
+        formatter = logging.Formatter(log_format)
+
+        # Optional: Prevent logs from leaking into the console via the root logger
+        logger.propagate = False
+        
+        if log_file:
+            log_dir = os.path.dirname(log_file)
+            if log_dir: os.makedirs(log_dir, exist_ok=True)
+
+            # create file handler and set format
+            handler=logging.handlers.TimedRotatingFileHandler(log_file, when='midnight', backupCount=7, encoding='utf-8')
+            handler.setFormatter(formatter)
+        
+            # add handler to logger
+            logger.addHandler(handler)
+        
+        else:
+            # Standard fallback to console printing if no file path provided
+            console_handler = logging.StreamHandler()
+            console_handler.setFormatter(formatter)
+            logger.addHandler(console_handler)
+    
+    logger.info(f"*********** init logger: {logger.name}  **************")
     return logger
 
 # =================================================================================================
@@ -72,20 +116,26 @@ class JobStream (object):
         raise NotImplementedError("run_row_job needs to be overwritten")
 
     def run_batch_job(self, dispatcher, batch):
+        '''Run jobs associated with the claimed batch.
+        By default, one row is run at a time, so there is no difference when
+        use in conjuction with a batch of one. However, the run_batch_job
+        can be overwritten with different behavior. 
+
+        A batch is a list of (row, claim) where:
+          - row : the row that is claimed
+          - claim: the json array of values that was used during the claiming process
         '''
-        row : the row that is claimed
-        claim: the json array of values that was used during the claiming process
-        '''
+        
         for row, claim in batch:
             try:
-                dispatcher.logger.info('\nClaimed job %s.' % row.get('RID'))
+                dispatcher.logger.info('run_batch_job: Claimed job %s.' % row.get('RID'))
                 self.run_row_job(dispatcher, row) # need to pass dispatcher
             except DispatcherBadDataError as e:
-                dispatcher.logger.error("Aborting task %s on data error: %s\n" % (row["RID"], e))
+                dispatcher.logger.error("Aborting task %s on bad data error: %r\n" % (row["RID"], e))
                 dispatcher.catalog.put(self.put_claim_url, json=[self.failure_input_data(row, e)])
                 # continue with next task...?
             except DispatcherRuntimeError as e:
-                dispatcher.logger.error("Aborting task %s on data error: %s\n" % (row["RID"], e))
+                dispatcher.logger.error("Aborting task %s on runtime error: %r\n" % (row["RID"], e))
                 dispatcher.catalog.put(self.put_claim_url, json=[self.failure_input_data(row, e)])
                 # continue with next task...?
             except Exception as e:
@@ -111,16 +161,19 @@ class Job(object):
 # ERMREST_SERVER=aixbio-dev.derivacloud.org CATALOG_ID=99 python structure_worker.py
 class JobDispatcher (object):
     job_streams = []   
-
-    def __init__(self, deriva_host, catalog_id, credential_file=None, poll_seconds=300, config_file=None, logger=None):
+    poll_seconds = int(os.getenv('POLL_SECONDS', '300'))
+    config_file = os.getenv('CONFIG', None)
+    logger = logger
+    
+    def __init__(self, deriva_host, catalog_id, credential_file=None, poll_seconds=None, config_file=None, logger=None, verbose=False):
         # -- initiate ermrest
         self.deriva_host = deriva_host
         self.catalog_id = catalog_id
         self.credential_file = credential_file
         self.credentials = get_credential(self.deriva_host, self.credential_file)  
-        print("credential: %s" % (self.credentials))
-        self.poll_seconds = poll_seconds
-        self.config_file = config_file  # os.getenv('CONFIG', '/home/aixbio/config/processing/conf.json')
+        if poll_seconds: self.poll_seconds = poll_seconds
+        if config_file: self.config_file = config_file
+        self.verbose = verbose
         # these are peristent/logical connections so we create once and reuse
         # they can retain state and manage an actual HTTP connection-pool
         self.catalog = PollingErmrestCatalog(
@@ -129,10 +182,11 @@ class JobDispatcher (object):
             self.catalog_id,
             self.credentials
         )
+        self.store = HatracStore('https', self.deriva_host, self.credentials)        
         self.catalog.dcctx['cid'] = 'pipeline'
-        self.logger = logger
-        self.logger.info("--- JobDispatcher: init")
-        self.store = HatracStore('https', self.deriva_host, self.credentials)
+        if logger: self.logger = logger
+        self.logger.info(f"--- JobDispatcher: init with poll_second: {self.poll_seconds}, config_file: {self.config_file}")
+
         
     def look_for_work(self):
         """Find, claim, and process work for each work unit.
@@ -158,11 +212,17 @@ class JobDispatcher (object):
                     stream.claim_input_data,
                     stream.idle_etag
                 )
+            except ConcurrentUpdate as e:
+                logger.info('Looking for job: got ConcurrentUpdate "%r"' % (e,))
+                sys.stderr.write('-- look_for_work: Got ConcurrentUpdate error\n')
+                time.sleep(random.uniform(1, 2)) # wait a bit
+                found_work = True
+                continue                
             except Exception as e:
                 # keep going if we have a broken WorkUnit
                 et, ev, tb = sys.exc_info()
-                sys.stderr.write('Looking for job: got unexpected exception "%s"\n' % str(ev))
-                self.logger.error('Looking for job: got unexpected exception "%s"' % str(ev))
+                sys.stderr.write('Looking for job: got unexpected exception "%r"\n' % (e))
+                self.logger.error('Looking for job: got unexpected exception "%r"' % (e))
                 self.logger.error('%s' % ''.join(traceback.format_exception(et, ev, tb)))
                 continue
             # batch may be empty if no work was found...
@@ -213,8 +273,6 @@ class ExampleJobStream (JobStream):
 
 def main(args):
     DESC = "Processing worker"
-    INFO = "For more information see: https://github.com/informatics-isi-edu/aixbio"
-
     print("args: %s" % (args))
     
     dispatcher = JobDispatcher(args.host, args.catalog_id, args.credential_file, logger=logger)

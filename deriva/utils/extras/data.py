@@ -123,8 +123,11 @@ def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None
     return(inserted)
 
 # ---------------------------------------------------------------
-def update_table_rows(catalog, schema_name, table_name, keys=["RID"], column_names=[], payload=[], batch_size=10000, batch_bytes=2000000):
-    model = catalog.getCatalogModel()
+def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"], column_names=[], payload=[], batch_size=10000, batch_bytes=2000000):
+    """
+    Passing model object remove one roundtrip time for getCatalogModel request.
+    """
+    if not model: model = catalog.getCatalogModel()
     if not payload:
         return []
     
@@ -340,7 +343,10 @@ def get_ermrest_query(catalog, schema_name, table_name, constraints=None, keys=[
         if attributes:
             quoted_keys = urlquote_list(keys)
             quoted_list = urlquote_list(attributes)
-            url = "%s/%s;%s" % (url, ",".join(quoted_keys), ",".join(quoted_list))
+            if quoted_keys == quoted_list:
+                url = "%s/%s" % (url, ",".join(quoted_keys))  # get key only
+            else:
+                url = "%s/%s;%s" % (url, ",".join(quoted_keys), ",".join(quoted_list))
         if sort:
             url = "%s@sort(%s)" % (url, ",".join(urlquote_list(sort)))
         if after: url = "%s@after(%s)" % (url, ",".join( [ urlquote(v) for v in after ]))
