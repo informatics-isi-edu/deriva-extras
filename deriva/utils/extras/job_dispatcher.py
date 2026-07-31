@@ -100,6 +100,7 @@ def init_logger(log_level="info", log_file="/tmp/log/processor.log", name=None, 
 # =================================================================================================
 # claim_input_data=lambda row: {'RID': row['RID'], 'Processing_Status': "In-progress", 'Status_Detail': None},
 class JobStream (object):
+    
     def __init__(
             self,
             get_claimable_url,
@@ -110,6 +111,7 @@ class JobStream (object):
         self.put_claim_url = put_claim_url
         self.put_update_baseurl = put_update_baseurl
         self.idle_etag = None
+        self.run_dir = os.getcwd() 
 
     def run_row_job(self, dispatcher, row):
         # TO BE OVERWRITE BY SUBCLASSES
