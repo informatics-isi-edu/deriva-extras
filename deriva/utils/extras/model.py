@@ -435,6 +435,43 @@ FKEY_ACLS = {
     "RCBRMB": None,
 }
 
+def combine_groups(group1, group2):
+    """ Combine group1 and group2 without duplicates in its respective order
+
+    Args:
+        grp1 (list): group 1
+        grp2 (list): group 2
+
+    Returns:
+        list: a list combining group1 and group2 without duplicates in its respective order
+    """
+    if group1 is None: group1 = []
+    if group2 is None: group2 = []
+    group = group1.copy()
+    for g in group2:
+        if g not in group: group.append(g)
+        
+    return group
+# -----------------------------------------------------------
+def remove_groups(group1, group2):
+    """ Remove group2 from  group1 without distrubing group1 existing order
+
+    Args:
+        grp1 (list): group 1
+        grp2 (list): group 2
+
+    Returns:
+        list: a list of group1 subtract group2 in its respective order
+    """
+    
+    if group1 is None: group1 = []
+    if group2 is None: group2 = []
+    group = group1.copy()
+    for g in group2:
+        if g in group: group.remove(g)
+        
+    return group
+
 # -----------------------------------------------------------
 def set_ermrest_groups(catalog):
     """set ERMrest groups
