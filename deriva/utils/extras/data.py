@@ -84,7 +84,7 @@ def get_batch_len(payload, index=0, batch_size=10000, batch_bytes=2000000, decre
     return nrows 
 
 # ---------------------------------------------------------------
-def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000, onconflict="skip"):
+def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000, onconflict=None):
     if not payload:
         return []
 
@@ -123,6 +123,10 @@ def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None
         nrows = batch_size
 
     return(inserted)
+
+# ---------------------------------------------------------------
+def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000):
+    return insert_table_rows(catalog, schema_name, table_name, payload, defaults=defaults, batch_size=batch_size, batch_bytes=batch_bytes, onconflict="skip")
 
 # ---------------------------------------------------------------
 def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"], column_names=[], payload=[], batch_size=10000, batch_bytes=2000000):
