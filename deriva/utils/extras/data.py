@@ -7,6 +7,9 @@ from deriva.core import ErmrestCatalog, AttrDict, get_credential, DEFAULT_CREDEN
 from deriva.core.ermrest_model import builtin_types, Schema, Table, Column, Key, ForeignKey, tag, AttrDict
 from deriva.core import urlquote, urlunquote
 import requests.exceptions
+import logging
+
+logger = logging.getLogger(__name__)
 
 system_columns = ["RID", "RCT", "RMT", "RCB", "RMB"]
 
@@ -187,7 +190,11 @@ def update_data_if_change(catalog, schema_name, table_name, keys, defaults='', c
 # ---------------------------------------------------------------
 # TODO: make sure to return the right arrays!
 # constraints is used to check the existing entries in the Ermrest
-def insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None, payload=[], constraints=None, update_columns=None, batch_size=10000, limit=50000, bypass_insert=False):
+def _insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None, payload=[], constraints=None, update_columns=None, batch_size=10000, limit=50000, bypass_insert=False):
+    """
+    NOT READY FOR USE
+    """
+    
     print("------ insert_if_not_exist ---------")
     #print(json.dumps(payload, indent=4))
     
@@ -264,6 +271,7 @@ def insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None
     if not update_payload:
         print("  - COMPLETE: Nothing new to update")
         return(inserted + existed)
+    
     print("  - PARTIAL INSERT: will update %d rows" % (len(update_payload)))
     #print("  - PARTIAL INSERT: will update %d rows: %s" % (len(update_payload), json.dumps(update_payload, indent=4)))
     updated = update_table_rows(catalog, schema_name, table_name, key="RID", column_names=update_columns, payload=update_payload, batch_size=10000)
@@ -272,24 +280,46 @@ def insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None
 # ---------------------------------------------------------------
 # Example of response object: statis_code=204 headers={'Date': 'Fri, 27 Sep 2024 19:36:32 GMT', 'Server': 'Apache/2.4.59 (Fedora Linux) OpenSSL/3.0.9 mod_wsgi/4.9.4 Python/3.11', 'Set-Cookie': 'webauthn_track=ef32ad10.6231ef8ef6959; path=/; expires=Sat, 27-Sep-25 19:36:32 GMT', 'Vary': 'DNT,cookie,accept,User-Agent', 'Upgrade': 'h2', 'Connection': 'Upgrade, Keep-Alive', 'ETag': '"FvbI_TUNoSPPd3ANOP6-Ew==;*/*;2024-09-27 12:36:32.975696-07:00"', 'Keep-Alive': 'timeout=5, max=100'}
 
-def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="RID", values=None):
+def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="RID", values=None, verbose=False, dry_run=False):
+    """
+    Delete table rows according to the provided constraints.
+
+    Args: 
+        catalog (obj): Deriva ERMrest catalog
+        schema_name (str): schema name of the table to delete rows from
+        table_name (str): table name to delete rows from
+        constraints (str): constraints of rows to be deleted. 
+        key (str): the key column participating in the cosntraints
+        values (str): values of the key to be deleted.
+        verbose (bool): whether to print progress to stdout
+        dry_run (bool): print out the details of the delete intention without actually submitting the request to the server
+    
+    Note: To be conservative, either the constraint is provided or key and values are provided. 
+    To delete all rows, set constraints="RID::regexp::*"
+    
+    TODO: address multi-column keys
+    """
     #print("sname: %s, tname: %s, constraints: %s, key:%s, values:%s" % (schema_name, table_name, constraints, key, values))
+    
     # no constraint will cause all rows to be deleted!!
     if not values and not constraints:
-        raise Exception("DELETE ERROR: delete operation needs constraints")
+        raise Exception("DELETE ERROR: delete_table_rows requires either constraints or key/values of rows to be deleted")
+    
     # prioritize key values.
-    # TODO: address multi-keys?
     if key and values:
         constraints = "%s=ANY(%s)" % (urlquote(key), ",".join([ urlquote(v) for v in values ]))
     try:
-        url = "/entity/M:=%s:%s/%s" % (urlquote(schema_name), urlquote(table_name), constraints)    
-        resp = catalog.delete(url)
-        #print("delete_table_rows: status_code: %s, headers: %s" % (resp.status_code, resp.headers))
+        url = "/entity/M:=%s:%s/%s" % (urlquote(schema_name), urlquote(table_name), constraints)
+        if not dry_run:
+            resp = catalog.delete(url)
+            if verbose: print("delete_table_rows: %s: status_code: %s, headers: %s" % (url, resp.status_code, resp.headers))
+        else:
+            print(f"- delete_table_rows DRY_RUN with url: {url}") 
     except requests.HTTPError as e:
         if e.response.status_code == 404:
-            print("delete_table_rows: WARNING: ROWS NOT FOUND: url:%s status_code=%s NOT FOUND" % (url, e.response.status_code))
+            logger.info("delete_table_rows: ROWS NOT FOUND: url:%s status_code=%s NOT FOUND" % (url, e.response.status_code))
         else:
-            #print("ERROR: url:%s, errors=%s" % (url, e))
+            logger.error("ERROR happens during delete_table_rows: url:%s, errors=%s" % (url, e))
             raise 
 
 # ---------------------------------------------------------------
@@ -304,7 +334,7 @@ def urlquote_list(attr_list):
     quoted_list = []
     for attr in attr_list:
         # aggregate function e.g. Agg:=array(M:structure_id)
-        m = re.search("^([^:=]+:=)?(array|array_d|cnt|cnt_d)+\\(([^:=]+:)*([^:=()]+)\\)$", attr)
+        m = re.search("^([^:=]+:=)?(array|array_d|cnt|cnt_d|min|max)+\\(([^:=]+:)*([^:=()]+)\\)$", attr)
         if m:
             if not m[1]: raise Exception("ERROR: Aggregate function '%s' needs an assignment" % (m[2]))
             m1 = urlquote(m[1].rsplit(":=",1)[0])+":=" 
@@ -328,18 +358,31 @@ def urlquote_list(attr_list):
 """
   attr_list is a string attached to the query for projection/aggregate lists.
 """
-def get_ermrest_query(catalog, schema_name, table_name, constraints=None, keys=["RID"], attributes=None, sort=["RID"], limit=None, batch_size=5000):
+def get_ermrest_query(catalog, schema_name, table_name, constraints=None, keys=["RID"], attributes=None, aggregates=None, sort=["RID"], limit=None, batch_size=5000):
+    """
+    Args:
+        catalog (obj): catalog
+        schema_name (str): schema name for ermrest API
+        table_name (str): table name for ermrest API. This table will also be assigned an alias M
+        constraints (str): constraint str for ermrest API
+        keys (list): a list of keys to be used for attributegroup API
+        attributes (list): a list of attributes for attributegroup API
+        aggregates (list): a list of aggretates for aggregate API
+        sort (list): sort columns
+    
+    TODO: address sort (to support direction) and after
+    """
     payload = []
     if not limit:
         limit = 10000000
     after = []
     while True:
         page_size = limit if limit < batch_size else batch_size
-        if attributes:
-            url = "/attributegroup/M:=%s:%s" % (urlquote(schema_name), urlquote(table_name))
-        else:
-            url = "/entity/M:=%s:%s" % (urlquote(schema_name), urlquote(table_name))
+        # -- base api
+        api = "attributegroup" if attributes else "aggregate" if aggregates else "entity"
+        url = "/%s/M:=%s:%s" % (api, urlquote(schema_name), urlquote(table_name))
         if constraints: url = "%s/%s" % (url, constraints)
+        # -- key/attr list
         if attributes:
             quoted_keys = urlquote_list(keys)
             quoted_list = urlquote_list(attributes)
@@ -347,10 +390,16 @@ def get_ermrest_query(catalog, schema_name, table_name, constraints=None, keys=[
                 url = "%s/%s" % (url, ",".join(quoted_keys))  # get key only
             else:
                 url = "%s/%s;%s" % (url, ",".join(quoted_keys), ",".join(quoted_list))
-        if sort:
-            url = "%s@sort(%s)" % (url, ",".join(urlquote_list(sort)))
-        if after: url = "%s@after(%s)" % (url, ",".join( [ urlquote(v) for v in after ]))
-        url = "%s?limit=%d" % (url, page_size)
+        elif aggregates:
+            quoted_list = urlquote_list(aggregates)                
+            url = "%s/%s" % (url, ",".join(quoted_list))
+        # -- sort
+        if api not in ["aggregate"]:
+            if sort:
+                url = "%s@sort(%s)" % (url, ",".join(urlquote_list(sort)))
+            if after:
+                url = "%s@after(%s)" % (url, ",".join( [ urlquote(v) for v in after ]))
+            url = "%s?limit=%d" % (url, page_size)
         print("get_ermrest_query: url = %s" % (url))
         rows = catalog.get(url).json()
         payload.extend(rows)
