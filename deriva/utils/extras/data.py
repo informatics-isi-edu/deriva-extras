@@ -88,6 +88,21 @@ def get_batch_len(payload, index=0, batch_size=10000, batch_bytes=2000000, decre
 
 # ---------------------------------------------------------------
 def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000, onconflict=None):
+    """Insert rows into the specified ermrest table
+
+    Args:
+        catalog (obj): Deriva ERMrest catalog
+        schema_name (str): schema name of the table to delete rows from
+        table_name (str): table name to delete rows from
+        payload (list): the rows to be inserted
+        defaults (list): a list of default columns to be filled by ERMrest
+        batch_size (int): the targeted number of rows per batch
+        batch_bytes (int): the batch byte limit. If the batch content exceeds batch_bytes limit, the number of rows is reduced
+    until the content fits within the limit.
+        onconflict (str): what to do if rows already exist. By default, ERMrest will throw an error. Set it to "skip"
+    to avoid the error.
+    """
+    
     if not payload:
         return []
 
@@ -129,12 +144,30 @@ def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, 
 
 # ---------------------------------------------------------------
 def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000):
+    """insert rows into specified table. Skip rows that already exist.
+    This function call insert_table_rows with onconflict="skip".
+    
+    See the function signature from insert_table_rows. 
+    """
     return insert_table_rows(catalog, schema_name, table_name, payload, defaults=defaults, batch_size=batch_size, batch_bytes=batch_bytes, onconflict="skip")
 
 # ---------------------------------------------------------------
 def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"], column_names=[], payload=[], batch_size=10000, batch_bytes=2000000):
     """
-    Passing model object remove one roundtrip time for getCatalogModel request.
+    Passing model object to remove one roundtrip time for getCatalogModel request.
+
+    Args:
+        catalog (obj): Deriva ERMrest catalog
+        schema_name (str): schema name of the table to delete rows from
+        table_name (str): table name to delete rows from
+        model (obj): ERMrest model object. If not provided, we will fetch it from the ERMrest catalog.
+        keys (list): the key columns to use for updates
+        column_names (list): the name of columns to be updated. If None, all applicable columns will be updated
+        payload (list): the rows to be updated
+        batch_size (int): the targeted number of rows per batch
+        batch_bytes (int): the batch byte limit. If the batch content exceeds batch_bytes limit, the number of rows is reduced
+    until the content fits within the limit.
+    
     """
     if not model: model = catalog.getCatalogModel()
     if not payload:
@@ -190,7 +223,7 @@ def get_key_for_dict(keys, row):
     return(tuple(index))
     
 # ---------------------------------------------------------------
-def update_data_if_change(catalog, schema_name, table_name, keys, defaults='', constraints=None, update_columns=None, payload=[], batch_size=10000):
+def update_data_if_modified(catalog, schema_name, table_name, keys, defaults='', constraints=None, update_columns=None, payload=[], batch_size=10000):
     pass
 
 # ---------------------------------------------------------------
@@ -419,7 +452,12 @@ def get_ermrest_query(catalog, schema_name, table_name, constraints=None, keys=[
 
 
 # ---------------------------------------------------------------
-def get_key2rows(catalog, schema_name, table_name, constraints='', keys=["RID"], attributes=None, sort=["RID"], limit=None):
+def _get_key2rows(catalog, schema_name, table_name, constraints='', keys=["RID"], attributes=None, sort=["RID"], limit=None):
+    """ Create a key2rows dict based on provided key columns.
+    If keys is a single column, then a string is used for key, else a tuple of values corresponding to
+    key columns are used for the return dict keys
+    
+    """
     key2rows = {}
     rows = get_ermrest_query(catalog, schema_name, table_name, constraints=constraints, keys=keys, attributes=attributes, sort=sort, limit=limit)
     # strip alias from keys 
