@@ -34,7 +34,7 @@ def approx_json_bytecnt(data):
         bytecnt = 2
         for k, v in data.items():
             # key + ':' val + ','
-            bytecnt = 2 + approx_json_bytecnt(k) + approx_json_bytecnt(v)
+            bytecnt += 2 + approx_json_bytecnt(k) + approx_json_bytecnt(v)
         return bytecnt
     elif isinstance(data, str):
         # '"' + UTF8 string + '"'
@@ -87,14 +87,16 @@ def get_batch_len(payload, index=0, batch_size=10000, batch_bytes=2000000, decre
     return nrows 
 
 # ---------------------------------------------------------------
-def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000):
+def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000, onconflict=None):
     if not payload:
         return []
 
+    query_params = []
+    if onconflict:
+        query_params.append('onconflict=%s' % (urlquote(onconflict)))
     if defaults:
-        defaults_str = '&defaults=%s' % (','.join(list(map(urlquote, defaults))))
-    else:
-        defaults_str = ''
+        query_params.append('defaults=%s' % (','.join(list(map(urlquote, defaults)))))
+    query_str = '?%s' % ('&'.join(query_params)) if query_params else ''
 
     inserted = []
     index = 0
@@ -114,7 +116,7 @@ def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None
         batch = payload[index:index+nrows]
         #print("index=%d nrows=%d bytes=%d" % (index, nrows, bytes))
         resp = catalog.post(
-            "/entity/%s:%s?onconflict=skip%s" % (urlquote(schema_name), urlquote(table_name), defaults_str),
+            "/entity/%s:%s%s" % (urlquote(schema_name), urlquote(table_name), query_str),
             json=batch
         )
         inserted.extend(resp.json())
@@ -124,6 +126,10 @@ def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None
         nrows = batch_size
 
     return(inserted)
+
+# ---------------------------------------------------------------
+def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000):
+    return insert_table_rows(catalog, schema_name, table_name, payload, defaults=defaults, batch_size=batch_size, batch_bytes=batch_bytes, onconflict="skip")
 
 # ---------------------------------------------------------------
 def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"], column_names=[], payload=[], batch_size=10000, batch_bytes=2000000):
