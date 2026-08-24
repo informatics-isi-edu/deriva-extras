@@ -13,6 +13,8 @@ logger = logging.getLogger(__name__)
 
 system_columns = ["RID", "RCT", "RMT", "RCB", "RMB"]
 
+URL_LENGTH_LIMIT = 2000  
+
 # -- =================================================================================
 # -- data manipulation utilities
 #
@@ -221,7 +223,23 @@ def get_key_for_dict(keys, row):
     for key in keys:
         index.append(row[key])
     return(tuple(index))
+
+
+def get_key_values(row, key_cnames):
+    """
+    Return key value based on specified key column names
+    Args:
+        key_cnames (list): key column name list
+    Returns:
+        The column value of the single key column, or else tuple of all column values in the column list
+    """
     
+    if len(key_cnames) == 1:
+        return row[key_cnames[0]]
+    else:
+        values = [ row[cname] for cname in key_cnames ]
+    return tuple(values)
+
 # ---------------------------------------------------------------
 def update_data_if_modified(catalog, schema_name, table_name, keys, defaults='', constraints=None, update_columns=None, payload=[], batch_size=10000):
     pass
@@ -363,8 +381,82 @@ def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="R
 
 # ---------------------------------------------------------------
 
-def delete_table_rows_by_keys(catalog):
-    pass
+def get_batch_size_by_str_length(keys, kvals, start_index, length_limit=2000):
+    """ Get batch size based on key column names and values with a starting index that fits
+    within the string length limit (e.g. URL length limitation). This function is used
+    to split a long server API that would have failed into many smaller requests that fit
+    the length limitation.
+    
+    Args
+        keys (list): key column names
+        kvals (list): a list of key values if key length = 1 else a list of key column value tuples
+        start_index (int): the index of kvals to use as the start of the payload
+        length_limit (int): string length limit
+
+    constraint formats:
+        single key: <keys[0]>=any(...) format
+        multi key columns: <keys[0]>=<kvals[i][0]>&<keys[1]>=<kvals[i][1];...
+    """
+    key_length = len(keys)
+    kcnames_length = sum([len(k) for k in keys ])
+    kvals_length = len(kvals)
+    
+    l = kcnames_length + len('any()') if key_length == 1 else 0
+    index = start_index
+    while index < kvals_length:
+        kval = kvals[index]
+        if key_length == 1:
+            l += len(kval) + 1
+        else:
+            l +=  kcnames_length + sum([len(v) for v in kval]) + (2 * key_length) # for "=", "&", and ";" -- off by 1 but ok. 
+        if l >= length_limit: break
+        index += 1
+        
+    batch_size = index - start_index
+    #print("- get_batch_size_by_str_length: batch_size: %d, length: %d" % (batch_size, l))
+    
+    return batch_size
+
+
+def delete_table_rows_by_keys(catalog, sname, tname, keys, key_values, length_limit=None, dry_run=True, verbose=True):
+    """Delete sample with the specified RIDs from sample table in batches (due to URL length limitation and response time).
+    This in turns will also delete acquisition_sample, and ms_bulk_loaders.        
+    Note: Deleting rows will also delete db indices which could leads to server server timeout if the payload is too large.
+    
+    Args:
+        catalog (obj): Deriva ERMrest catalog
+        schema_name (str): schema name of the table to delete rows from
+        table_name (str): table name to delete rows from
+        keys (list): key column names
+        kvals (list): a list of key values if key length = 1 else a list of key column value tuples
+        length_limit (int): API string length limit
+        dry_run (bool): print out the details of the delete intention without actually submitting the request to the server    
+        verbose (bool): whether to print progress to stdout
+    """
+    
+    if not key_values: return
+    if len(keys) > 1 and len(key_values[0]) != len(keys):
+        raise Exception(f"INPUT_ERROR: len of key ({len(keys)}) and values ({len(key_values[0])}) are not the same")
+    
+    print(f"- delete_table_rows_by_keys: {tname} - deleting [{len(key_values)}]: {key_values[0:2]}")
+
+    if not length_limit: 
+        length_limit=URL_LENGTH_LIMIT
+    index = 0
+    total = len(key_values)
+    while index < total:
+        batch_size = get_batch_size_by_str_length(keys, key_values, index, length_limit)
+        if verbose: print("- delete_table_rows_by_keys: index: %d, batch_size: %d" % (index, batch_size))
+        kvals = key_values[index:index+batch_size]
+        if len(keys) == 1:
+            constraints = f'{keys[0]}=any({",".join(kvals)})'
+        else:
+            key_length = len(keys)
+            conjunctions = [ '&'.join([ f"{keys[i]}={kval[i]}" for i in range(0,key_length) ]) for kval in kvals ]
+            constraints = ";".join(conjunctions)
+        delete_table_rows(catalog, sname, tname, constraints=constraints, dry_run=dry_run, verbose=verbose)
+        index += batch_size
+    
 
 # ---------------------------------------------------------------
 
@@ -452,7 +544,8 @@ def get_ermrest_query(catalog, schema_name, table_name, constraints=None, keys=[
 
 
 # ---------------------------------------------------------------
-def _get_key2rows(catalog, schema_name, table_name, constraints='', keys=["RID"], attributes=None, sort=["RID"], limit=None):
+# This is needed by PDB
+def get_key2rows(catalog, schema_name, table_name, constraints='', keys=["RID"], attributes=None, sort=["RID"], limit=None):
     """ Create a key2rows dict based on provided key columns.
     If keys is a single column, then a string is used for key, else a tuple of values corresponding to
     key columns are used for the return dict keys
