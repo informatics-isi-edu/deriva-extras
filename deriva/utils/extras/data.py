@@ -41,7 +41,7 @@ def approx_json_bytecnt(data):
     elif isinstance(data, str):
         # '"' + UTF8 string + '"'
         # but also double count newline and backslash for escapes
-        return 2 + len(data.encode('utf8')) + data.count('\n') + data.count('\\')
+        return 2 + len(data.encode('utf8')) + data.count('\n') + data.count('\\') + data.count('"')
     elif isinstance(data, (int, float, bool)):
         # unquoted values do not add syntax
         return len(str(data))
@@ -182,9 +182,9 @@ def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"]
         for cname in  model.schemas[schema_name].tables[table_name].columns.elements:
             if cname not in update_exclude_columns:
                 column_names.append(cname)
-    cnames = ','.join([ urlquote(c) for c in column_names])
+    cnames = ','.join([ urlquote(str(c)) for c in column_names])
     if not cnames:
-        print("ERROR: column names to be updated is empty")
+        logger.warning("WARNING: column names to be updated is empty")
         return []
     
     updated = []
@@ -196,13 +196,11 @@ def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"]
     while index < payload_len:
         batch = payload[index:index+nrows]
         bytes = approx_json_bytecnt(batch)
-        while bytes > batch_bytes:  # TODO: better backoff algorithm
-            nrows = nrows - 1000
+        while bytes > batch_bytes and nrows > 1:  # TODO: better backoff algorithm
+            nrows = max(1, nrows - 1000)
             batch = payload[index:index+nrows]            
             bytes = approx_json_bytecnt(batch)
             
-        if nrows <= 0: nrows = 1
-        batch = payload[index:index+nrows]
         #print("- updating rows[%d:%d](%d bytes): %s:%s => \n%s " % (index, nrows, bytes, schema_name, table_name, json.dumps(batch, indent=4, sort_keys=True)))
         resp = catalog.put(
             "/attributegroup/%s:%s/%s;%s" % (urlquote(schema_name), urlquote(table_name), ','.join([ urlquote(k) for k in keys ]), cnames),
@@ -227,17 +225,24 @@ def get_key_for_dict(keys, row):
 
 def get_key_values(row, key_cnames):
     """
-    Return key value based on specified key column names
+    Return key value(s) from a row based on specified key column names.
+    
     Args:
-        key_cnames (list): key column name list
+        row (dict): A dictionary representing a single database row.
+        key_cnames (list): A list of key column names.
+        
     Returns:
-        The column value of the single key column, or else tuple of all column values in the column list
+        The column value of the single key column, or a tuple of all column values 
+        in the column list if multiple keys are provided.
     """
+    if not key_cnames:
+        raise ValueError("a list of key column names are needed")
     
     if len(key_cnames) == 1:
         return row[key_cnames[0]]
     else:
         values = [ row[cname] for cname in key_cnames ]
+        
     return tuple(values)
 
 # ---------------------------------------------------------------
@@ -360,11 +365,11 @@ def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="R
     
     # no constraint will cause all rows to be deleted!!
     if not values and not constraints:
-        raise Exception("DELETE ERROR: delete_table_rows requires either constraints or key/values of rows to be deleted")
+        raise ValueError("DELETE ERROR: delete_table_rows requires either constraints or key/values of rows to be deleted")
     
     # prioritize key values.
     if key and values:
-        constraints = "%s=ANY(%s)" % (urlquote(key), ",".join([ urlquote(v) for v in values ]))
+        constraints = "%s=ANY(%s)" % (urlquote(str(key)), ",".join([ urlquote(str(v)) for v in values ]))
     try:
         url = "/entity/M:=%s:%s/%s" % (urlquote(schema_name), urlquote(table_name), constraints)
         if not dry_run:
@@ -373,7 +378,7 @@ def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="R
         else:
             print(f"- delete_table_rows DRY_RUN with url: {url}") 
     except requests.HTTPError as e:
-        if e.response.status_code == 404:
+        if getattr(e, 'response', None) is not None and e.response.status_code == 404:            
             logger.info("delete_table_rows: ROWS NOT FOUND: url:%s status_code=%s NOT FOUND" % (url, e.response.status_code))
         else:
             logger.error("ERROR happens during delete_table_rows: url:%s, errors=%s" % (url, e))
@@ -398,18 +403,20 @@ def get_batch_size_by_str_length(keys, kvals, start_index, length_limit=2000):
         multi key columns: <keys[0]>=<kvals[i][0]>&<keys[1]>=<kvals[i][1];...
     """
     key_length = len(keys)
-    kcnames_length = sum([len(k) for k in keys ])
+    kcnames_length = sum([len(urlquote(str(k))) for k in keys ])
     kvals_length = len(kvals)
     
-    l = kcnames_length + len('any()') if key_length == 1 else 0
+    current_length = kcnames_length + len('any()') if key_length == 1 else 0
     index = start_index
     while index < kvals_length:
         kval = kvals[index]
         if key_length == 1:
-            l += len(kval) + 1
+            current_length += len(str(kval)) + 1
         else:
-            l +=  kcnames_length + sum([len(v) for v in kval]) + (2 * key_length) # for "=", "&", and ";" -- off by 1 but ok. 
-        if l >= length_limit: break
+            current_length +=  kcnames_length + sum([len(urlquote(str(v))) for v in kval]) + (2 * key_length) # for "=", "&", and ";" -- off by 1 but ok. 
+        if current_length >= length_limit:
+            if index == start_index: index += 1  # Force at least a batch size of 1
+            break
         index += 1
         
     batch_size = index - start_index
@@ -425,8 +432,8 @@ def delete_table_rows_by_keys(catalog, sname, tname, keys, key_values, length_li
     
     Args:
         catalog (obj): Deriva ERMrest catalog
-        schema_name (str): schema name of the table to delete rows from
-        table_name (str): table name to delete rows from
+        sname (str): schema name of the table to delete rows from
+        tname (str): table name to delete rows from
         keys (list): key column names
         kvals (list): a list of key values if key length = 1 else a list of key column value tuples
         length_limit (int): API string length limit
@@ -436,7 +443,7 @@ def delete_table_rows_by_keys(catalog, sname, tname, keys, key_values, length_li
     
     if not key_values: return
     if len(keys) > 1 and len(key_values[0]) != len(keys):
-        raise Exception(f"INPUT_ERROR: len of key ({len(keys)}) and values ({len(key_values[0])}) are not the same")
+        raise ValueError(f"INPUT_ERROR: len of key ({len(keys)}) and values ({len(key_values[0])}) are not the same")
     
     print(f"- delete_table_rows_by_keys: {tname} - deleting [{len(key_values)}]: {key_values[0:2]}")
 
@@ -449,10 +456,10 @@ def delete_table_rows_by_keys(catalog, sname, tname, keys, key_values, length_li
         if verbose: print("- delete_table_rows_by_keys: index: %d, batch_size: %d" % (index, batch_size))
         kvals = key_values[index:index+batch_size]
         if len(keys) == 1:
-            constraints = f'{keys[0]}=any({",".join(kvals)})'
+            constraints = f'{urlquote(str(keys[0]))}=any({",".join([urlquote(str(v)) for v in kvals])})'
         else:
             key_length = len(keys)
-            conjunctions = [ '&'.join([ f"{keys[i]}={kval[i]}" for i in range(0,key_length) ]) for kval in kvals ]
+            conjunctions = [ '&'.join([ f"{urlquote(str(keys[i]))}={urlquote(str(kval[i]))}" for i in range(0,key_length) ]) for kval in kvals ]
             constraints = ";".join(conjunctions)
         delete_table_rows(catalog, sname, tname, constraints=constraints, dry_run=dry_run, verbose=verbose)
         index += batch_size
