@@ -1089,17 +1089,23 @@ def clear_table_annotations(model, schema_name, table_name, clear_tags):
       clear_tags: a set of annotation tags to clear
     '''
     table = model.schemas[schema_name].tables[table_name]
+    
+    # == clear table annotations
     t_tags = list(table.annotations.keys()).copy()
     for tt in t_tags:
         if tt in clear_tags : table.annotations.pop(tt, None)
-        for column in table.columns:
-            c_tags = list(column.annotations.keys()).copy()
-            for t in c_tags:
-                if t in clear_tags : column.annotations.pop(t, None)
-        for fkey in table.foreign_keys:
-            fk_tags = list(fkey.annotations.keys()).copy()
-            for t in fk_tags:
-                if t in clear_tags : fkey.annotations.pop(t, None)
+        
+    # == clear col annotations 
+    for column in table.columns:
+        c_tags = list(column.annotations.keys()).copy()
+        for t in c_tags:
+            if t in clear_tags : column.annotations.pop(t, None)
+            
+    # == clear fkey annotations
+    for fkey in table.foreign_keys:
+        fk_tags = list(fkey.annotations.keys()).copy()
+        for t in fk_tags:
+            if t in clear_tags : fkey.annotations.pop(t, None)
 
 # ---------------------------------------------------------------------------------------                
 # NOTE: This function also remove tags that are not in the tag.values()
