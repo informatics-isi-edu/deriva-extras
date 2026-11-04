@@ -116,12 +116,13 @@ class HatracFile:
     default_content_type: str = 'application/octet-stream'
     chunk_size: int = 5*1024*1024 #25*1024*1024
 
-    # TODO: fix the init function. 
-    def init(self, store, file_path=None, hashes=["md5"]):
-        self.store = store
+    def set_file_info(self, file_path, hashes=["md5"]):
+        """
+        set metadata of specified file_path
+        """
         if not file_path: return
         if not os.path.isfile(self.file_path): 
-            raise Exception("UPLOAD ERROR: A local file path [%s] is not a file or doesn't exist" % (self.file_path))
+            raise Exception("ERROR: A local file path [%s] is not a file or doesn't exist" % (self.file_path))
         self.file_name = os.path.basename(self.file_path) 
         self.file_name = self.sanitize_filename(self.file_name)
         self.file_bytes = os.path.getsize(self.file_path) #os.stat(self.file_path).st_size

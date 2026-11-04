@@ -154,7 +154,7 @@ def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None
     return insert_table_rows(catalog, schema_name, table_name, payload, defaults=defaults, batch_size=batch_size, batch_bytes=batch_bytes, onconflict="skip")
 
 # ---------------------------------------------------------------
-def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"], column_names=[], payload=[], batch_size=10000, batch_bytes=2000000):
+def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"], column_names=None, payload=None, batch_size=10000, batch_bytes=2000000):
     """
     Passing model object to remove one roundtrip time for getCatalogModel request.
 
@@ -386,7 +386,7 @@ def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="R
 
 # ---------------------------------------------------------------
 
-def get_batch_size_by_str_length(keys, kvals, start_index, length_limit=2000):
+def get_batch_size_by_str_length(keys, kvals, start_index, length_limit=None):
     """ Get batch size based on key column names and values with a starting index that fits
     within the string length limit (e.g. URL length limitation). This function is used
     to split a long server API that would have failed into many smaller requests that fit
@@ -402,6 +402,9 @@ def get_batch_size_by_str_length(keys, kvals, start_index, length_limit=2000):
         single key: <keys[0]>=any(...) format
         multi key columns: <keys[0]>=<kvals[i][0]>&<keys[1]>=<kvals[i][1];...
     """
+    
+    if not length_limit: length_limit=URL_LENGTH_LIMIT
+    
     key_length = len(keys)
     kcnames_length = sum([len(urlquote(str(k))) for k in keys ])
     kvals_length = len(kvals)
@@ -425,9 +428,8 @@ def get_batch_size_by_str_length(keys, kvals, start_index, length_limit=2000):
     return batch_size
 
 
-def delete_table_rows_by_keys(catalog, sname, tname, keys, key_values, length_limit=None, dry_run=True, verbose=True):
+def delete_table_rows_by_keys(catalog, sname, tname, keys, key_values, length_limit=None, dry_run=True, verbose=False):
     """Delete sample with the specified RIDs from sample table in batches (due to URL length limitation and response time).
-    This in turns will also delete acquisition_sample, and ms_bulk_loaders.        
     Note: Deleting rows will also delete db indices which could leads to server server timeout if the payload is too large.
     
     Args:
@@ -445,15 +447,14 @@ def delete_table_rows_by_keys(catalog, sname, tname, keys, key_values, length_li
     if len(keys) > 1 and len(key_values[0]) != len(keys):
         raise ValueError(f"INPUT_ERROR: len of key ({len(keys)}) and values ({len(key_values[0])}) are not the same")
     
-    print(f"- delete_table_rows_by_keys: {tname} - deleting [{len(key_values)}]: {key_values[0:2]}")
+    if verbose: print(f"- delete_table_rows_by_keys: {tname} - deleting [n={len(key_values)}][0:5]: {key_values[0:5]}")
 
-    if not length_limit: 
-        length_limit=URL_LENGTH_LIMIT
+    if not length_limit: length_limit = URL_LENGTH_LIMIT
     index = 0
     total = len(key_values)
     while index < total:
         batch_size = get_batch_size_by_str_length(keys, key_values, index, length_limit)
-        if verbose: print("- delete_table_rows_by_keys: index: %d, batch_size: %d" % (index, batch_size))
+        if verbose: print("  - delete_table_rows_by_keys: index: %d, batch_size: %d" % (index, batch_size))
         kvals = key_values[index:index+batch_size]
         if len(keys) == 1:
             constraints = f'{urlquote(str(keys[0]))}=any({",".join([urlquote(str(v)) for v in kvals])})'
