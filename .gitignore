@@ -13,8 +13,6 @@ sql/*~
 **/tmp/**
 **/*.tmp
 **/temp/**
-**/test/**
-**/tests/**
 
 # config
 config-scripts/config/*.json
