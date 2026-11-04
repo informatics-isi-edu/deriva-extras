@@ -145,7 +145,7 @@ def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, 
     return(inserted)
 
 # ---------------------------------------------------------------
-def insert_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000):
+def insert_rows_if_not_exist(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000):
     """insert rows into specified table. Skip rows that already exist.
     This function call insert_table_rows with onconflict="skip".
     
@@ -246,99 +246,92 @@ def get_key_values(row, key_cnames):
     return tuple(values)
 
 # ---------------------------------------------------------------
-def update_data_if_modified(catalog, schema_name, table_name, keys, defaults='', constraints=None, update_columns=None, payload=[], batch_size=10000):
-    pass
-
-# ---------------------------------------------------------------
-# TODO: make sure to return the right arrays!
-# constraints is used to check the existing entries in the Ermrest
-def _insert_if_exist_update(catalog, schema_name, table_name, keys, defaults=None, payload=[], constraints=None, update_columns=None, batch_size=10000, limit=50000, bypass_insert=False):
+def upsert_table_rows(model, sname, tname, payload, existing_key2rows, keys=None, exclude_cnames=None, exclude_rows=None,
+                      update_existing=True, defaults=None, verbose=False, dry_run=False, update_only=False):
     """
-    NOT READY FOR USE
-    """
-    
-    print("------ insert_if_not_exist ---------")
-    #print(json.dumps(payload, indent=4))
-    
-    if not keys or not payload:
-        print("Payload is empty")
-        return None
-    print("insert_if_exist_update: sname: %s, table: %s, keys: %s, defaults: %s, constraints: %s" % (schema_name, table_name, keys, defaults, constraints))
-    inserted = []    
-    # == try to insert first
-    #   - excluding checking for "RID" in payload[0].keys()?
-    if bypass_insert: # or "RID" in payload[0].keys():    
-        print("  - BYPASS INSERT: bypass_insert (%s) is True or RID exist in payload: payload[0]=%s" % (bypass_insert, payload[0]))
-    else:
-        inserted = insert_if_not_exist(catalog, schema_name, table_name, payload, defaults, batch_size)
-        print("  - INSERTED: %d rows inserted" % (len(inserted)))
-        #print("  - INSERTED: %d rows inserted: %s" % (len(inserted), json.dumps(inserted, indent=4)))
-        if len(payload) == len(inserted):
-            print("  - COMPLETE: All rows are new: all inserted")
-            return(payload)
-            
-    # == check for updates (rows that didn't get inserted)
-    keys2rows = { get_key_for_dict(keys, row) : row for row in payload }
-    keys2inserted = { get_key_for_dict(keys, row) : row for row in inserted }
-    # -- check for rows that didn't get inserted
-    keys2update = {}
-    for (index, row) in keys2rows.items():
-        if index in keys2inserted.keys(): continue
-        keys2update[index] = row
+    Check rows in payload against existing ermrest entries provided. If any of the column values of a row is different,
+    add the row to the update list. The function returns ermrest rows that have been updated.
+        
+    Args:
+        model (obj): ermrest model
+        sname (str): schema name of the table to have its rows updated
+        tname (str): table name of the table to have its rows updated
+        payload (list): the updating rows
+        existing_keys2rows (dict): the key-to-row dict of the existing rows for checking whether the content has changed
+        keys (list): a key cname list associated with exiting_keys2rows key
+        exclude_cnames (list): column names to be excluded from update    
+        exclude_rows (list): rows to be excluded, matched by the same `keys` used for the payload lookup
+                             (e.g. rows that were just inserted and should not be updated again).
+        update_existing (boolean): If update_existing flag is set, the existing_key2rows dict will also be updated.
+        dry_run (boolean): if set, log the rows that would be updated (WARNING) and return an empty list without writing to Ermrest.
 
-    # == check update_columns: if not specified, include all columns except system columns
-    attr_list = None    
-    if not update_columns:
-        attr_list = set(payload[0].keys()) - set(system_columns)
-        update_columns = attr_list
-            
-    # == read existing rows from ermrest
-    # -- if constraints is not provided, create constraints based on rows to be updated
-    if not constraints:
-        if len(keys) == 1:
-            constraints = "%s=ANY(%s)" % (urlquote(keys[0]), ",".join([urlquote(row[keys[0]]) for row in keys2update.values()]))
-        else:
-            disjunctions = []
-            for (index, row) in keys2update.items():
-                conjunctions = []
-                for key in keys:
-                    conjunctions.append("%s=%s" % (urlquote(key), urlquote(row[key])))
-                disjunctions.append("&".join(conjunctions))
-            constraints = ";".join(disjunctions)
-    print("  - getting existing rows with constraints = %s" % (constraints))
-    # -- TODO: check for URL length limitation based on constraints. Retrieve only update_columns instead of all rows
-    existing = get_ermrest_query(catalog, schema_name, table_name, constraints=constraints, keys=["RID"], attr_list=attr_list)
-    #print("  - Getting existing rows with constraints %s from ermrest [%d]: %s" % (constraints, len(existing), json.dumps(existing, indent=4)))
-    keys2existing = { get_key_for_dict(keys, row) : row for row in existing }
+    Returns:
+        list: a list of rows that have been updated in Ermrest, empty when nothing was modified or when dry_run is set
+    """
+
+    if keys is None: keys = ["RID"]
+    if exclude_cnames is None: exclude_cnames = []
+    if exclude_rows is None: exclude_rows = []
+    if not payload: return []
+
+    catalog = model.catalog    
+    table = model.schemas[sname].tables[tname]
     
-    # == update rows that are different only
-    existed = []
-    updated = []
-    update_payload = []
-    for index, new_row in keys2update.items():
-        old_row = keys2existing[index]
-        to_update = False
-        for k in update_columns:
-            if k in system_columns: continue
-            if old_row[k] != new_row[k]:
-                print("  - [%s]: key %s is different (%r:%s v.s. %r:%s)" % (old_row["RID"], k, old_row[k], type(old_row[k]), new_row[k], type(new_row[k])))
-                to_update = True
+    exclude_key_values = [ get_key_values(row, keys) for row in exclude_rows ]  # exclude key values
+    exclude_columns = set( ["RID", "RCT", "RMT", "RCB", "RMB"] + keys + exclude_cnames )
+    update_columns = set(model.schemas[sname].tables[tname].columns.elements) - set(exclude_columns)
+    update_columns = list( update_columns & set(payload[0].keys()) )  # intersection of payload and existing rows
+
+    inserting = inserted = []
+    updating = updated = []
+    for row in payload:
+        key_val = get_key_values(row, keys)
+        existing_row = existing_key2rows.get(key_val, None)
+        if not existing_row:
+            inserting.append(row)
+            continue
+        if "RID" not in row.keys(): row["RID"] = existing_row["RID"]
+        if key_val in exclude_key_values: continue
+        # -- check whether the row values have changed
+        for cname in update_columns:
+            if cname not in existing_row.keys() or cname not in row.keys() : continue
+            ctype = table.columns[cname].type.typename
+            if ctype == "timestamptz" and row[cname] and existing_row[cname] and timestamptz_to_datetime(row[cname]) == timestamptz_to_datetime(existing_row[cname]): continue
+            if row[cname] != existing_row[cname]:
+                if verbose: print("----- cname: %s, ctype: %s : %s v.s. %s (existing) are different" % (cname, ctype, row[cname], existing_row[cname]))
+                updating.append(row)
                 break
-        if to_update:
-            #print("  - update payload with RID:%s" % (old_row["RID"]))
-            new_row["RID"] = old_row["RID"]
-            update_payload.append(new_row)
-        else:
-            existed.append(old_row)
-    if not update_payload:
-        print("  - COMPLETE: Nothing new to update")
-        return(inserted + existed)
-    
-    print("  - PARTIAL INSERT: will update %d rows" % (len(update_payload)))
-    #print("  - PARTIAL INSERT: will update %d rows: %s" % (len(update_payload), json.dumps(update_payload, indent=4)))
-    updated = update_table_rows(catalog, schema_name, table_name, key="RID", column_names=update_columns, payload=update_payload, batch_size=10000)
-    return(inserted + existed + updated)
-                           
+
+    if inserting:
+        if update_only:
+            logger.warning("* upsert_table_rows: Non-existing rows in table %s: %d rows do not exist: %s" % (tname, len(inserting), json.dumps(inserting[0:2], indent=4)))
+            raise Exception("Non-existing rows in table %s: %d rows do not exist" % (tname, len(inserting)))
+        if dry_run:
+            logger.warning("** upsert_table_rows [DRY RUN] : inserting %d rows: %s", tname, len(inserting), json.dumps(inserting[0:2], indent=4))
+            return []
+        inserted = insert_table_rows(catalog, schema_name, table_name, inserting, defaults=defaults, onconflict="skip")
+        if verbose: print("- upsert_table_rows: %s - INSERTED %d rows: %s" % (tname, len(inserted), json.dumps(inserted[0:2], indent=4)))
+        
+    if updating:
+        if dry_run:
+            logger.warning("** upsert_table_rows [DRY RUN] : %s - updating %d rows: %s", tname, len(updating), json.dumps(updating[0:2], indent=4))
+            return []
+        if verbose: print("- upsert_table_rows: %s - updating %d rows: %s" % (tname, len(updating), json.dumps(updating[0:2], indent=4)))
+        updated = update_table_rows(catalog, sname, tname, keys=keys, payload=updating, column_names=update_columns)
+        if verbose: print("- upsert_table_rows: %s - UPDATED %d [from %d] rows: %s" % (tname, len(updated), len(payload), json.dumps([ existing_key2rows[get_key_values(row, keys)] for row in updating[0:1] ] , indent=4)))        
+    else:
+        if verbose: print("x upsert_table_rows: %s -- no rows to update (from %d)" % (tname, len(payload)))
+        pass
+
+    if update_existing:
+        for row in inserted:
+            existing_key2rows[get_key_values(row, keys)] = row
+        for row in updated:
+            existing_key2rows[get_key_values(row, keys)].update(row)
+        
+    return inserted+updated
+
+
 # ---------------------------------------------------------------
 # Example of response object: statis_code=204 headers={'Date': 'Fri, 27 Sep 2024 19:36:32 GMT', 'Server': 'Apache/2.4.59 (Fedora Linux) OpenSSL/3.0.9 mod_wsgi/4.9.4 Python/3.11', 'Set-Cookie': 'webauthn_track=ef32ad10.6231ef8ef6959; path=/; expires=Sat, 27-Sep-25 19:36:32 GMT', 'Vary': 'DNT,cookie,accept,User-Agent', 'Upgrade': 'h2', 'Connection': 'Upgrade, Keep-Alive', 'ETag': '"FvbI_TUNoSPPd3ANOP6-Ew==;*/*;2024-09-27 12:36:32.975696-07:00"', 'Keep-Alive': 'timeout=5, max=100'}
 
