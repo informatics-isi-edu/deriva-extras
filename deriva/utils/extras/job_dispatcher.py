@@ -12,7 +12,7 @@ import time
 
 from deriva.core import PollingErmrestCatalog, HatracStore, init_logging, urlquote, get_credential, ConcurrentUpdate, add_logging_level
 
-from deriva.utils.extras.data import insert_if_not_exist, get_ermrest_query, delete_table_rows
+from deriva.utils.extras.data import get_ermrest_query, delete_table_rows
 from deriva.utils.extras.model import create_vocabulary_tdoc, create_vocab_tdoc, create_table_if_not_exist, create_schema_if_not_exist
 from deriva.utils.extras.shared import DCCTX, ConfigCLI, cfg
 

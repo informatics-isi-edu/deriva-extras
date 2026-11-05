@@ -4,7 +4,7 @@ import sys
 import json
 import re
 from deriva.core import ErmrestCatalog, AttrDict, get_credential, DEFAULT_CREDENTIAL_FILE, tag, urlquote, DerivaServer, get_credential, BaseCLI
-from deriva.core.ermrest_model import builtin_types, Schema, Table, Column, Key, ForeignKey, tag, AttrDict
+from deriva.core.ermrest_model import builtin_types, Model, Schema, Table, Column, Key, ForeignKey, tag, AttrDict, timestamptz_to_datetime
 from deriva.core import urlquote, urlunquote
 import requests.exceptions
 import logging
@@ -89,7 +89,7 @@ def get_batch_len(payload, index=0, batch_size=10000, batch_bytes=2000000, decre
     return nrows 
 
 # ---------------------------------------------------------------
-def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000, onconflict=None):
+def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000, decrement=1000, onconflict=None):
     """Insert rows into the specified ermrest table
 
     Args:
@@ -122,14 +122,18 @@ def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, 
     print("** insert_if_not_exist: %s:%s payload len: %d rows (%d bytes)" % (schema_name, table_name, payload_len, approx_json_bytecnt(payload)))
     
     while index < payload_len:
+        """# old implementation
+        #nrows = batch_size  # old implementation
         batch = payload[index:index+nrows]
         bytes = approx_json_bytecnt(batch)
         while bytes > batch_bytes:
             nrows = nrows - 1000
             batch = payload[index:index+nrows]            
             bytes = approx_json_bytecnt(batch)
-            
         if nrows <= 0: nrows = 1
+        """
+        nrows = get_batch_len(payload, index=index, batch_size=batch_size, batch_bytes=batch_bytes, decrement=decrement)
+        
         batch = payload[index:index+nrows]
         #print("index=%d nrows=%d bytes=%d" % (index, nrows, bytes))
         resp = catalog.post(
@@ -140,7 +144,6 @@ def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, 
         #print("inserting rows[%d:%d](%d bytes): %s:%s => \n%s " % (index, nrows, bytes, schema_name, table_name, json.dumps(resp.json(), indent=4, sort_keys=True)))        
         #print("  - inserting rows[%d:%d](%d bytes): %s:%s " % (index, index+nrows, bytes, schema_name, table_name))
         index = index + nrows
-        nrows = batch_size
 
     return(inserted)
 
@@ -159,7 +162,8 @@ def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"]
     Passing model object to remove one roundtrip time for getCatalogModel request.
 
     Args:
-        catalog (obj): Deriva ERMrest catalog
+        model (obj): Deriva ERMrest model. This positional argument used to be catalog. For backward compatibility,
+    this is also allowed, but the model will be fetched from the server every time this is called (not efficient). 
         schema_name (str): schema name of the table to delete rows from
         table_name (str): table name to delete rows from
         model (obj): ERMrest model object. If not provided, we will fetch it from the ERMrest catalog.
@@ -171,7 +175,14 @@ def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"]
     until the content fits within the limit.
     
     """
-    if not model: model = catalog.getCatalogModel()
+    if isinstance(catalog, Model):
+        model = catalog
+        catalog = model.catalog
+    elif isinstance(catalog, ErmrestCatalog):
+        if not model: model = catalog.getCatalogModel()        
+    else:
+        raise Exception("Incorrect data type. The first argument is expected to be either Model or ErmrestCatalog")
+    
     if not payload:
         return []
     
@@ -304,12 +315,12 @@ def upsert_table_rows(model, sname, tname, payload, existing_key2rows, keys=None
 
     if inserting:
         if update_only:
-            logger.warning("* upsert_table_rows: Non-existing rows in table %s: %d rows do not exist: %s" % (tname, len(inserting), json.dumps(inserting[0:2], indent=4)))
+            logger.error("* upsert_table_rows: Non-existing rows in table %s: %d rows do not exist: %s" % (tname, len(inserting), json.dumps(inserting[0:2], indent=4)))
             raise Exception("Non-existing rows in table %s: %d rows do not exist" % (tname, len(inserting)))
         if dry_run:
-            logger.warning("** upsert_table_rows [DRY RUN] : inserting %d rows: %s", tname, len(inserting), json.dumps(inserting[0:2], indent=4))
+            logger.warning("** upsert_table_rows [DRY RUN] : %s - inserting %d rows: %s", tname, len(inserting), json.dumps(inserting[0:2], indent=4))
             return []
-        inserted = insert_table_rows(catalog, schema_name, table_name, inserting, defaults=defaults, onconflict="skip")
+        inserted = insert_table_rows(catalog, sname, tname, inserting, defaults=defaults, onconflict="skip")
         if verbose: print("- upsert_table_rows: %s - INSERTED %d rows: %s" % (tname, len(inserted), json.dumps(inserted[0:2], indent=4)))
         
     if updating:
@@ -317,7 +328,7 @@ def upsert_table_rows(model, sname, tname, payload, existing_key2rows, keys=None
             logger.warning("** upsert_table_rows [DRY RUN] : %s - updating %d rows: %s", tname, len(updating), json.dumps(updating[0:2], indent=4))
             return []
         if verbose: print("- upsert_table_rows: %s - updating %d rows: %s" % (tname, len(updating), json.dumps(updating[0:2], indent=4)))
-        updated = update_table_rows(catalog, sname, tname, keys=keys, payload=updating, column_names=update_columns)
+        updated = update_table_rows(model, sname, tname, keys=keys, payload=updating, column_names=update_columns)
         if verbose: print("- upsert_table_rows: %s - UPDATED %d [from %d] rows: %s" % (tname, len(updated), len(payload), json.dumps([ existing_key2rows[get_key_values(row, keys)] for row in updating[0:1] ] , indent=4)))        
     else:
         if verbose: print("x upsert_table_rows: %s -- no rows to update (from %d)" % (tname, len(payload)))
@@ -378,6 +389,21 @@ def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="R
             raise 
 
 # ---------------------------------------------------------------
+def _key_constraint_term(keys, kval):
+    """URL-encoded constraint term for one key value: `v` for a single key, `k1=v1&k2=v2` for multi-key."""
+    if len(keys) == 1:
+        return urlquote(str(kval))
+    return '&'.join(f"{urlquote(str(k))}={urlquote(str(v))}" for k, v in zip(keys, kval))
+
+
+def _key_constraints(keys, terms):
+    """Join encoded terms into an ERMrest constraint: `k=any(t1,t2)` (single key) or `t1;t2` (multi-key)
+    where t is `v` in a single key, and `k1=v1&k2=v2` in multi-keys
+    """
+    if len(keys) == 1:
+        return f"{urlquote(str(keys[0]))}=any({','.join(terms)})"
+    return ';'.join(terms)
+
 
 def get_batch_size_by_str_length(keys, kvals, start_index, length_limit=None):
     """ Get batch size based on key column names and values with a starting index that fits
@@ -397,25 +423,20 @@ def get_batch_size_by_str_length(keys, kvals, start_index, length_limit=None):
     """
     
     if not length_limit: length_limit=URL_LENGTH_LIMIT
-    
-    key_length = len(keys)
-    kcnames_length = sum([len(urlquote(str(k))) for k in keys ])
-    kvals_length = len(kvals)
-    
-    current_length = kcnames_length + len('any()') if key_length == 1 else 0
+    if start_index >= len(kvals): return 0
+
+    # fixed part of the constraint: "<key>=any()" for a single key, nothing for multi-key
+    current_length = len(_key_constraints(keys, [])) if len(keys) == 1 else 0
     index = start_index
-    while index < kvals_length:
-        kval = kvals[index]
-        if key_length == 1:
-            current_length += len(str(kval)) + 1
-        else:
-            current_length +=  kcnames_length + sum([len(urlquote(str(v))) for v in kval]) + (2 * key_length) # for "=", "&", and ";" -- off by 1 but ok. 
-        if current_length >= length_limit:
-            if index == start_index: index += 1  # Force at least a batch size of 1
+    while index < len(kvals):
+        separator = 1 if index > start_index else 0   # "," (single key) or ";" (multi-key)
+        added = separator + len(_key_constraint_term(keys, kvals[index]))
+        if current_length + added > length_limit:
             break
+        current_length += added
         index += 1
         
-    batch_size = index - start_index
+    batch_size = max(index - start_index, 1)
     #print("- get_batch_size_by_str_length: batch_size: %d, length: %d" % (batch_size, l))
     
     return batch_size
@@ -449,12 +470,8 @@ def delete_table_rows_by_keys(catalog, sname, tname, keys, key_values, length_li
         batch_size = get_batch_size_by_str_length(keys, key_values, index, length_limit)
         if verbose: print("  - delete_table_rows_by_keys: index: %d, batch_size: %d" % (index, batch_size))
         kvals = key_values[index:index+batch_size]
-        if len(keys) == 1:
-            constraints = f'{urlquote(str(keys[0]))}=any({",".join([urlquote(str(v)) for v in kvals])})'
-        else:
-            key_length = len(keys)
-            conjunctions = [ '&'.join([ f"{urlquote(str(keys[i]))}={urlquote(str(kval[i]))}" for i in range(0,key_length) ]) for kval in kvals ]
-            constraints = ";".join(conjunctions)
+        # built with the same helpers get_batch_size_by_str_length measures, so the two cannot drift apart
+        constraints = _key_constraints(keys, [ _key_constraint_term(keys, kval) for kval in kvals ])
         delete_table_rows(catalog, sname, tname, constraints=constraints, dry_run=dry_run, verbose=verbose)
         index += batch_size
     
@@ -559,7 +576,7 @@ def get_key2rows(catalog, schema_name, table_name, constraints='', keys=["RID"],
     if len(dict_keys) == 1:
         key2rows = { row[dict_keys[0]]: row for row in rows  }
     elif len(dict_keys) > 1:
-        key2rows = { row[tuple(dict_keys)]: row for row in rows  }        
+        key2rows = { tuple([row[k] for k in dict_keys ]): row for row in rows  }
     return key2rows
 
 

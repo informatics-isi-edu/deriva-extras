@@ -32,7 +32,7 @@ from datetime import datetime as dt, timedelta, timezone
 import pytz
 
 from deriva.core import PollingErmrestCatalog, HatracStore, urlquote, get_credential, DerivaServer, BaseCLI, init_logging
-from deriva.utils.extras.data import insert_if_not_exist, update_table_rows, delete_table_rows, get_ermrest_query
+from deriva.utils.extras.data import update_table_rows, delete_table_rows, get_ermrest_query
 from deriva.utils.extras.hatrac import HatracFile
 from deriva.utils.extras.shared import ConfigCLI, DCCTX, cfg
 from deriva.utils.extras.job_dispatcher import init_logger

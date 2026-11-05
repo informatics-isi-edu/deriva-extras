@@ -12,7 +12,7 @@ from deriva.core import ErmrestCatalog, HatracStore, AttrDict, get_credential, D
 from deriva.core.ermrest_model import builtin_types, Schema, Table, Column, Key, ForeignKey
 from deriva.utils.extras.shared import ConfigCLI, DCCTX
 from deriva.utils.extras.model import create_table_if_not_exist, create_vocab_tdoc
-from deriva.utils.extras.data import insert_if_not_exist
+from deriva.utils.extras.data import insert_rows_if_not_exist
 
 '''
   * See https://github.com/informatics-isi-edu/protein-database/wiki/JSON-schema-semantics on how to interpret mmcif json schema docs
@@ -1306,7 +1306,7 @@ TODO: BUG on table: ihm_cross_link_list, ihm_cross_link_restraint, ihm_poly_seqm
                     enum_dict[n] = self.common_vocab_table_dict[(tname, n)][i]
                 payload.append(enum_dict)
             print("vocab_tname: %s ==> %s " % (tname, payload))
-            insert_if_not_exist(catalog, self.vocab_schema_name, tname, payload)
+            insert_rows_if_not_exist(catalog, self.vocab_schema_name, tname, payload)
     
         # iterate over vocab tables (non-common) to get payload and update ermrest
         for (tname, cname), ermrest_tdef in self.ermrest_vocab_tables.items():
@@ -1316,7 +1316,7 @@ TODO: BUG on table: ihm_cross_link_list, ihm_cross_link_restraint, ihm_poly_seqm
             vocab_tname = ermrest_tdef["table_name"]
             payload = list(enum_dict.values())
             print("vocab_tname: %s ==> %s " % (vocab_tname, payload))
-            insert_if_not_exist(catalog, self.vocab_schema_name, vocab_tname, payload)
+            insert_rows_if_not_exist(catalog, self.vocab_schema_name, vocab_tname, payload)
 
 
 # =========================================================================================
