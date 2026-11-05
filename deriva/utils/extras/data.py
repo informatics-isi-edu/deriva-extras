@@ -67,7 +67,9 @@ def get_batch_len(payload, index=0, batch_size=10000, batch_bytes=2000000, decre
     while bytes > batch_bytes:
         #print("!!! bytes: %d > batch_bytes: %d  nrows: %d --> Reduce batch size by %s" % (bytes, batch_bytes, nrows, decrement))        
         nrows = nrows - decrement
-        if nrows < 0: nrows = 0
+        if nrows < 0:
+            nrows = 0
+            break
         batch = payload[index:index+nrows]
         bytes = approx_json_bytecnt(batch)
 
@@ -89,7 +91,7 @@ def get_batch_len(payload, index=0, batch_size=10000, batch_bytes=2000000, decre
     return nrows 
 
 # ---------------------------------------------------------------
-def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000, decrement=1000, onconflict=None):
+def insert_table_rows(catalog, schema_name, table_name, payload, defaults=None, batch_size=10000, batch_bytes=2000000, onconflict=None, decrement=1000):
     """Insert rows into the specified ermrest table
 
     Args:
@@ -157,7 +159,7 @@ def insert_rows_if_not_exist(catalog, schema_name, table_name, payload, defaults
     return insert_table_rows(catalog, schema_name, table_name, payload, defaults=defaults, batch_size=batch_size, batch_bytes=batch_bytes, onconflict="skip")
 
 # ---------------------------------------------------------------
-def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"], column_names=None, payload=None, batch_size=10000, batch_bytes=2000000):
+def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"], column_names=None, payload=None, batch_size=10000, batch_bytes=2000000, decrement=1000):
     """
     Passing model object to remove one roundtrip time for getCatalogModel request.
 
@@ -181,7 +183,7 @@ def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"]
     elif isinstance(catalog, ErmrestCatalog):
         if not model: model = catalog.getCatalogModel()        
     else:
-        raise Exception("Incorrect data type. The first argument is expected to be either Model or ErmrestCatalog")
+        raise TypeError("Incorrect data type. The first argument is expected to be either Model or ErmrestCatalog")
     
     if not payload:
         return []
@@ -205,12 +207,16 @@ def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"]
     print("** update_table: %s:%s payload len: %d rows (%d bytes)" % (schema_name, table_name, payload_len, approx_json_bytecnt(payload)))
     
     while index < payload_len:
+        """
+        nrows = batch_size  # reset nrows
         batch = payload[index:index+nrows]
         bytes = approx_json_bytecnt(batch)
         while bytes > batch_bytes and nrows > 1:  # TODO: better backoff algorithm
             nrows = max(1, nrows - 1000)
             batch = payload[index:index+nrows]            
             bytes = approx_json_bytecnt(batch)
+        """
+        nrows = get_batch_len(payload, index=index, batch_size=batch_size, batch_bytes=batch_bytes, decrement=decrement)
             
         #print("- updating rows[%d:%d](%d bytes): %s:%s => \n%s " % (index, nrows, bytes, schema_name, table_name, json.dumps(batch, indent=4, sort_keys=True)))
         resp = catalog.put(
@@ -220,12 +226,13 @@ def update_table_rows(catalog, schema_name, table_name, model=None, keys=["RID"]
         updated.extend(resp.json())
         print("  - updated rows[%d:%d](%d bytes): %s:%s " % (index, index+nrows, bytes, schema_name, table_name))
         index = index + nrows
-        nrows = batch_size  # reset nrows        
+
 
     return(updated)
 
 # ---------------------------------------------------------------
 def get_key_for_dict(keys, row):
+    """DEPRECATED"""
     if len(keys) == 1:
         return(row[keys[0]])
     index = []
@@ -255,6 +262,7 @@ def get_key_values(row, key_cnames):
         values = [ row[cname] for cname in key_cnames ]
         
     return tuple(values)
+
 
 # ---------------------------------------------------------------
 def upsert_table_rows(model, sname, tname, payload, existing_key2rows, keys=None, exclude_cnames=None, exclude_rows=None,
@@ -301,7 +309,7 @@ def upsert_table_rows(model, sname, tname, payload, existing_key2rows, keys=None
         if not existing_row:
             inserting.append(row)
             continue
-        if "RID" not in row.keys(): row["RID"] = existing_row["RID"]
+        #if "RID" not in row.keys(): row["RID"] = existing_row["RID"] # not needed
         if key_val in exclude_key_values: continue
         # -- check whether the row values have changed
         for cname in update_columns:
@@ -319,17 +327,17 @@ def upsert_table_rows(model, sname, tname, payload, existing_key2rows, keys=None
             raise Exception("Non-existing rows in table %s: %d rows do not exist" % (tname, len(inserting)))
         if dry_run:
             logger.warning("** upsert_table_rows [DRY RUN] : %s - inserting %d rows: %s", tname, len(inserting), json.dumps(inserting[0:2], indent=4))
-            return []
-        inserted = insert_table_rows(catalog, sname, tname, inserting, defaults=defaults, onconflict="skip")
-        if verbose: print("- upsert_table_rows: %s - INSERTED %d rows: %s" % (tname, len(inserted), json.dumps(inserted[0:2], indent=4)))
+        else:
+            inserted = insert_table_rows(catalog, sname, tname, inserting, defaults=defaults, onconflict="skip")
+            if verbose: print("- upsert_table_rows: %s - INSERTED %d rows: %s" % (tname, len(inserted), json.dumps(inserted[0:2], indent=4)))
         
     if updating:
         if dry_run:
             logger.warning("** upsert_table_rows [DRY RUN] : %s - updating %d rows: %s", tname, len(updating), json.dumps(updating[0:2], indent=4))
-            return []
-        if verbose: print("- upsert_table_rows: %s - updating %d rows: %s" % (tname, len(updating), json.dumps(updating[0:2], indent=4)))
-        updated = update_table_rows(model, sname, tname, keys=keys, payload=updating, column_names=update_columns)
-        if verbose: print("- upsert_table_rows: %s - UPDATED %d [from %d] rows: %s" % (tname, len(updated), len(payload), json.dumps([ existing_key2rows[get_key_values(row, keys)] for row in updating[0:1] ] , indent=4)))        
+        else:
+            if verbose: print("- upsert_table_rows: %s - updating %d rows: %s" % (tname, len(updating), json.dumps(updating[0:2], indent=4)))
+            updated = update_table_rows(model, sname, tname, keys=keys, payload=updating, column_names=update_columns)
+            if verbose: print("- upsert_table_rows: %s - UPDATED %d [from %d] rows: %s" % (tname, len(updated), len(payload), json.dumps([ existing_key2rows[get_key_values(row, keys)] for row in updating[0:1] ] , indent=4)))        
     else:
         if verbose: print("x upsert_table_rows: %s -- no rows to update (from %d)" % (tname, len(payload)))
         pass
@@ -368,7 +376,7 @@ def delete_table_rows(catalog, schema_name, table_name, constraints=None, key="R
     #print("sname: %s, tname: %s, constraints: %s, key:%s, values:%s" % (schema_name, table_name, constraints, key, values))
     
     # no constraint will cause all rows to be deleted!!
-    if not values and not constraints:
+    if (not values or not key) and (not constraints):
         raise ValueError("DELETE ERROR: delete_table_rows requires either constraints or key/values of rows to be deleted")
     
     # prioritize key values.

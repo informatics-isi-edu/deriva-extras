@@ -47,7 +47,7 @@ setup(
 #    },
     # move all image processing to requires if downloading lots of dependencies is a concern. 
     install_requires=[
-        'deriva>1.5.0',
+        'deriva>1.7.12',
     ],
     license='Apache 2.0',
     classifiers=[
@@ -58,7 +58,9 @@ setup(
         'Programming Language :: Python :: 3.9',
         'Programming Language :: Python :: 3.10',
         'Programming Language :: Python :: 3.11',
-        'Programming Language :: Python :: 3.12'
+        'Programming Language :: Python :: 3.12',
+        'Programming Language :: Python :: 3.13',
+        'Programming Language :: Python :: 3.14',
         'Topic :: Internet :: WWW/HTTP',
         'Topic :: Software Development :: Libraries :: Python Modules'
     ]

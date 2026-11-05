@@ -121,6 +121,7 @@ class HatracFile:
         set metadata of specified file_path
         """
         if not file_path: return
+        self.file_path = file_path
         if not os.path.isfile(self.file_path): 
             raise Exception("ERROR: A local file path [%s] is not a file or doesn't exist" % (self.file_path))
         self.file_name = os.path.basename(self.file_path) 
